@@ -2,7 +2,7 @@
 
 A review-first Git desktop app, built in Rust on [Rune](https://github.com/anomalyco/rune). `diffactive` is a working name: keep it in one constant.
 
-Plan and step status: `docs/plans/0001-approach.md`.
+Plan and task list: `docs/plans/0001-approach.md`. Read it before starting work.
 
 ## Product rules
 
@@ -14,14 +14,16 @@ Plan and step status: `docs/plans/0001-approach.md`.
 
 ## Workflow
 
-- Work one plan step at a time. Each ends with a runnable app and screenshots, then stop for UI review.
-- Never stage or commit. The reviewer does that after approving a step.
+- Take the next open task in the plan. Its step's context says what you need to get started.
+- Mark a task done in the plan once it works and is verified. Add anything later tasks need to know to that step's context.
+- When a step's last task is done, stop with a runnable app, screenshots and a list of what to try. Peter reviews the UI before the next step starts.
+- Never stage or commit unless Peter asks.
 
 ## Layout
 
 - `src/git.rs`: the only module that spawns git. `src/review.rs`: the comparisons. `src/overview.rs`: commits, branches, stashes. `src/app.rs`: state. `src/view.rs`: the window.
 - `docs/`: tracked work records. `docs/plans/` holds numbered plans and decisions.
-- `research/`: gitignored reference checkouts (rune, diffle, pierre, lazygit), spikes and a demo repo. Read them, never depend on them.
+- `research/`: gitignored, may be missing. Reference checkouts of `anomalyco/rune`, `moritzwilksch/diffle`, `pierrecomputer/pierre` and `jesseduffield/lazygit` (clone what you need), spikes, and `demo-repo/` for trying the app. Read them, never depend on them.
 
 ## Commands
 
@@ -32,7 +34,7 @@ Plan and step status: `docs/plans/0001-approach.md`.
 
 - Pin a rev of its `dev` branch; it is pre-release. Vetted so far: `781e2b6d87cd5f32d6f4365956fad4baaf24ee50`.
 - Rune takes issues, not pull requests.
-- Check UI work headlessly: `--snap out.png --size WxH --theme dark`, `--script keys.json --at mark:end`, `--tree`.
+- Check UI work headlessly with the built binary, from a repository: `--script steps.json --snap out.png --at mark:end --size 1500x950 --theme dark`, or `--tree out.json` for element keys. Data loads in the background, so wait for it with a script rather than a bare `--snap`: `[{"t":0.4,"type":"tap","key":"#2/segment1"},{"t":1.2,"type":"mark","name":"end"}]`.
 - Sources of truth: `research/rune/crates/rune/README.md`, `research/rune/crates/rune-kit/README.md`, and `research/rune/crates/rune-kit/examples/`.
 
 ## Invariants
