@@ -142,6 +142,16 @@ pub struct Comment {
 }
 
 impl Comment {
+    /// What sets it apart from an open comment whose code is there. A resolved comment's code
+    /// isn't looked for, so its `outdated` says nothing.
+    pub fn status(&self) -> Option<&'static str> {
+        match (self.resolved, self.outdated) {
+            (true, _) => Some("Resolved"),
+            (false, true) => Some("Outdated"),
+            (false, false) => None,
+        }
+    }
+
     /// Sorts by file, a whole-file comment before its lines, then line, then age.
     fn review_order(&self) -> (&str, u32, u64) {
         (&self.anchor.path, self.anchor.lines.as_ref().map_or(0, |lines| lines.start), self.id)
@@ -276,6 +286,13 @@ impl Comments {
         open
     }
 
+    /// Every comment: the open ones, then the resolved ones, each in review order.
+    pub fn listed(&self) -> Vec<&Comment> {
+        let mut listed: Vec<&Comment> = self.all.iter().collect();
+        listed.sort_by_key(|comment| (comment.resolved, comment.review_order()));
+        listed
+    }
+
     pub fn get(&self, id: u64) -> Option<&Comment> {
         self.all.iter().find(|comment| comment.id == id)
     }
@@ -286,11 +303,24 @@ impl Comments {
         self.save();
     }
 
-    pub fn resolve(&mut self, id: u64) {
+    pub fn set_resolved(&mut self, id: u64, resolved: bool) {
         if let Some(comment) = self.all.iter_mut().find(|comment| comment.id == id) {
-            comment.resolved = true;
+            comment.resolved = resolved;
             self.save();
         }
+    }
+
+    /// Rewords the comment; what it points at stays.
+    pub fn edit(&mut self, id: u64, body: String) {
+        if let Some(comment) = self.all.iter_mut().find(|comment| comment.id == id) {
+            comment.body = body;
+            self.save();
+        }
+    }
+
+    pub fn delete(&mut self, id: u64) {
+        self.all.retain(|comment| comment.id != id);
+        self.save();
     }
 
     /// Looks for every open comment's code again, in the background.
@@ -489,6 +519,36 @@ Was this right?
         assert!(comments.error.is_some());
         comments.add(anchor(1, &["a"]), Review::Changes, None, "Lost for now".into());
         assert_eq!(fs::read_to_string(&file).unwrap(), "not json");
+    }
+
+    #[test]
+    fn resolved_comments_list_after_open_ones_and_leave_the_prompt_until_reopened() {
+        let fixture = Fixture::new();
+        let mut comments = Comments::load(fixture.repo.clone());
+        comments.add(anchor(1, &["a"]), Review::Changes, None, "First".into());
+        comments.add(anchor(2, &["b"]), Review::Changes, None, "Second".into());
+        let ids = |comments: &[&Comment]| comments.iter().map(|comment| comment.id).collect::<Vec<_>>();
+
+        comments.set_resolved(1, true);
+        assert_eq!((ids(&comments.listed()), ids(&comments.open())), (vec![2, 1], vec![2]));
+
+        comments.set_resolved(1, false);
+        assert_eq!((ids(&comments.listed()), ids(&comments.open())), (vec![1, 2], vec![1, 2]));
+    }
+
+    #[test]
+    fn code_found_before_an_edit_or_delete_does_not_undo_it() {
+        let fixture = Fixture::new();
+        let mut comments = Comments::load(fixture.repo.clone());
+        comments.add(anchor(1, &["a"]), Review::Changes, None, "Before".into());
+        comments.add(anchor(2, &["b"]), Review::Changes, None, "Doomed".into());
+        let found: Vec<Comment> = comments.all.iter().cloned().map(|comment| Comment { outdated: true, ..comment }).collect();
+
+        comments.edit(1, "After".into());
+        comments.delete(2);
+        comments.apply_followed(found);
+
+        assert_eq!(comments.all, vec![Comment { outdated: true, ..comment(1, anchor(1, &["a"]), "After") }]);
     }
 
     #[test]

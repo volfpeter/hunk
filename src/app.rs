@@ -73,6 +73,11 @@ pub struct State {
     /// What the comment being written is about.
     pub draft: Option<Anchor>,
     pub draft_text: TextEdit,
+    /// The comment being reworded.
+    pub editing: Option<u64>,
+    pub edit_text: TextEdit,
+    /// The comment waiting for its deletion to be confirmed.
+    pub deleting: Option<u64>,
     /// The review the diff shows and the commit under review.
     shown: Option<(Review, Option<String>)>,
     /// The comment to scroll to once its review is on screen.
@@ -97,6 +102,9 @@ impl State {
             comments,
             draft: None,
             draft_text: TextEdit::default(),
+            editing: None,
+            edit_text: TextEdit::default(),
+            deleting: None,
             shown: None,
             reveal: None,
             copied: CopiedNotice::Hidden,
@@ -228,8 +236,64 @@ impl State {
     }
 
     pub fn resolve_comment(&mut self, id: u64) {
-        self.comments.resolve(id);
+        self.comments.set_resolved(id, true);
         self.comments_changed();
+    }
+
+    /// Makes the comment open again, and looks for its code, which nothing followed meanwhile.
+    pub fn reopen_comment(&mut self, id: u64) {
+        self.comments.set_resolved(id, false);
+        self.comments.follow_code();
+        self.comments_changed();
+    }
+
+    /// Opens the comment's wording for editing, leaving any comment being written as it is.
+    pub fn start_edit(&mut self, id: u64) {
+        let Some(comment) = self.comments.get(id) else { return };
+        self.edit_text = TextEdit::new(comment.body.clone());
+        self.edit_text.focused = true;
+        self.draft_text.focused = false;
+        self.editing = Some(id);
+    }
+
+    /// Opens the selected comment's wording for editing and brings it into view.
+    pub fn edit_selected(&mut self, tx: &mut Tx) {
+        let Some((id, anchor)) = self.selected_comment().map(|comment| (comment.id, comment.anchor.clone())) else { return };
+        self.start_edit(id);
+        self.scroll_to_anchor(&anchor, tx);
+    }
+
+    /// Keeps the new wording.
+    pub fn submit_edit(&mut self) {
+        let body = self.edit_text.text.trim().to_owned();
+        if body.is_empty() {
+            return;
+        }
+        if let Some(id) = self.editing {
+            self.comments.edit(id, body);
+            self.cancel_edit();
+        }
+    }
+
+    pub fn cancel_edit(&mut self) {
+        self.editing = None;
+        self.edit_text = TextEdit::default();
+        self.comments_changed();
+    }
+
+    pub fn ask_to_delete(&mut self, id: u64) {
+        self.deleting = Some(id);
+    }
+
+    pub fn confirm_delete(&mut self) {
+        if let Some(id) = self.deleting.take() {
+            self.comments.delete(id);
+            self.comments_changed();
+        }
+    }
+
+    pub fn cancel_delete(&mut self) {
+        self.deleting = None;
     }
 
     /// Copies every open comment as a prompt for an agent.
@@ -301,6 +365,7 @@ impl State {
     fn open_draft(&mut self, anchor: Anchor) {
         self.draft = Some(anchor);
         self.draft_text.focused = true;
+        self.edit_text.focused = false;
         self.place_annotations();
     }
 
@@ -322,11 +387,13 @@ impl State {
         }
     }
 
-    /// Puts each open comment and the draft under their lines in the diff on screen.
+    /// Puts each open comment, the selected comment and the draft under their lines in the diff
+    /// on screen.
     fn place_annotations(&mut self) {
+        let selected_resolved = self.selected_comment().filter(|comment| comment.resolved);
         let files = self.diff.files();
         let note = |anchor: &Anchor, id: String| anchor.position(files).map(|(file, at)| Annotation::new(file, at, id));
-        let comments = self.comments.open().into_iter().filter_map(|comment| note(&comment.anchor, comment.id.to_string()));
+        let comments = self.comments.open().into_iter().chain(selected_resolved).filter_map(|comment| note(&comment.anchor, comment.id.to_string()));
         let draft = self.draft.as_ref().and_then(|anchor| note(anchor, DRAFT_NOTE.to_owned()));
         let notes = comments.chain(draft).collect();
         self.diff.set_annotations(notes);
@@ -351,7 +418,7 @@ impl State {
             Kind::Branches => &self.overview.branches,
             Kind::Stashes => &self.overview.stashes,
             Kind::Comments => {
-                comments = self.comments.open().into_iter().map(comment_entry).collect();
+                comments = self.comments.listed().into_iter().map(comment_entry).collect();
                 &comments
             }
         };
@@ -371,6 +438,6 @@ fn comment_entry(comment: &Comment) -> Entry {
     Entry {
         id: comment.id.to_string(),
         title: comment.body.lines().next().unwrap_or_default().to_owned(),
-        detail: if comment.outdated { format!("{location} · outdated") } else { location },
+        detail: comment.status().map_or_else(|| location.clone(), |status| format!("{location} · {}", status.to_lowercase())),
     }
 }
