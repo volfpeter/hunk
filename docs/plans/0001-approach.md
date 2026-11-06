@@ -1,6 +1,6 @@
 # 0001: Approach
 
-Status: step 1 done, step 2 next. See [Tasks](#tasks).
+Status: step 2 in Peter's UI review, editing and deleting comments still to do. See [Tasks](#tasks).
 
 ## Intent
 
@@ -74,16 +74,26 @@ Starting points:
 - diffle does all of this in a browser, so use it as the behaviour reference: `research/diffle/crates/diffle/src/comments/` for anchoring, relocation, storage and prompt format.
 - Store state under `<git-dir>/diffactive/`.
 
+How it works:
+
+- Comments live in `src/comments.rs` and `<git-dir>/diffactive/comments.json`, one list per repository. An unreadable file is left alone: the error shows and nothing is saved over it.
+- Each comment keeps the review it was written in and quotes its lines. Refresh looks for the quote in that review's side (`Review::file`), nearest the old line. Finding it moves the comment; not finding it marks it outdated, and it recovers if the code comes back.
+- Placement in the diff on screen is separate: any review whose hunks hold the quote shows the comment, whichever review it came from.
+- Comments is a sixth kind in the bar. Picking one loads its own review and scrolls to it. If that diff can't show it, the card sits above the diff.
+- Typing in an annotation works. `TextArea` is 280 points wide until `.width(None)`, and a plain `TextEdit` submits on Enter and takes a new line on Shift+Enter.
+
 Tasks:
 
-- [ ] Write a comment on a line or a selected range
-- [ ] Write a comment on a whole file
-- [ ] Keep comments across restarts
-- [ ] Keep comments attached as the code around them changes
-- [ ] List comments whose code is gone as outdated, rather than losing them
-- [ ] Show open comments from any review, so comments made before staging stay reachable
-- [ ] Copy all open comments as one prompt for an agent
-- [ ] Resolve a comment
+- [x] Write a comment on a line or a selected range
+- [x] Write a comment on a whole file
+- [x] Keep comments across restarts
+- [x] Keep comments attached as the code around them changes
+- [x] List comments whose code is gone as outdated, rather than losing them
+- [x] Show open comments from any review, so comments made before staging stay reachable
+- [x] Copy all open comments as one prompt for an agent
+- [x] Resolve a comment
+- [ ] Edit a comment
+- [ ] Delete a comment
 
 ### Step 3: Git operations
 
@@ -93,6 +103,8 @@ Starting points:
 
 - Everything is read-only today. Git still goes through `src/git.rs`, and writes stay off the UI thread like reads.
 - `DiffState::set_files` collapses folds and clears the selection. Agents edit while Peter reads, so a refresh must not yank the view.
+- `State::refresh` also finds comments' code again, so refreshing by itself keeps comments attached for free. It reads every open comment's file, so a watcher should debounce.
+- Stash entries are identified by short hash, not `stash@{n}`, which shifts as stashes come and go.
 - Git runs with no stdin, so a credential prompt fails instead of hanging. Show git's error rather than handling auth.
 - `header_actions` is the natural place for a file's stage button. `rune_kit` has `Dialog`, `Combobox`, `Toast` and `TextArea`.
 

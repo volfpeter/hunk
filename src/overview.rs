@@ -85,13 +85,13 @@ fn branches(repo: &Repo) -> Result<Vec<Entry>> {
 }
 
 fn stashes(repo: &Repo) -> Result<Vec<Entry>> {
-    let list = repo.run(&["stash", "list", "-z", "--format=%s%x1f%cr"])?;
+    let list = repo.run(&["stash", "list", "-z", "--format=%h%x1f%s%x1f%cr"])?;
     Ok(list
         .split_terminator('\0')
-        .enumerate()
-        .filter_map(|(index, record)| {
-            let (subject, age) = record.split_once(FIELD)?;
-            Some(Entry { id: format!("stash@{{{index}}}"), title: subject.to_owned(), detail: age.to_owned() })
+        .filter_map(|record| {
+            let (hash, rest) = record.split_once(FIELD)?;
+            let (subject, age) = rest.split_once(FIELD)?;
+            Some(Entry { id: hash.to_owned(), title: subject.to_owned(), detail: age.to_owned() })
         })
         .collect())
 }
@@ -118,7 +118,7 @@ mod tests {
         let mut branches: Vec<&str> = overview.branches.iter().map(|b| b.id.as_str()).collect();
         branches.sort_unstable();
         assert_eq!(branches, ["feature", "main"]);
-        assert_eq!(overview.stashes[0].id, "stash@{0}");
+        assert_eq!(overview.stashes[0].id, fixture.git(&["rev-parse", "--short", "stash@{0}"]).trim());
         assert!(overview.stashes[0].title.contains("parked"));
     }
 

@@ -21,8 +21,8 @@ Plan and task list: `docs/plans/0001-approach.md`. Read it before starting work.
 
 ## Layout
 
-- `src/git.rs`: the only module that spawns git. `src/review.rs`: the comparisons. `src/overview.rs`: commits, branches, stashes. `src/app.rs`: state. `src/view.rs`: the window.
-- `docs/`: tracked work records. `docs/plans/` holds numbered plans and decisions.
+- `src/git.rs`: the only module that spawns git. `src/review.rs`: the comparisons. `src/overview.rs`: commits, branches, stashes. `src/comments.rs`: review comments. `src/app.rs`: state. `src/view.rs`: the window.
+- `docs/`: tracked work records. `docs/plans/` holds numbered plans and decisions. `docs/how-to-use.md` is the user guide: usage goes there, not in the README.
 - `research/`: gitignored, may be missing. Reference checkouts of `anomalyco/rune`, `moritzwilksch/diffle`, `pierrecomputer/pierre` and `jesseduffield/lazygit` (clone what you need), spikes, and `demo-repo/` for trying the app. Read them, never depend on them.
 
 ## Commands
@@ -35,6 +35,7 @@ Plan and task list: `docs/plans/0001-approach.md`. Read it before starting work.
 - Pin a rev of its `dev` branch; it is pre-release. Vetted so far: `781e2b6d87cd5f32d6f4365956fad4baaf24ee50`.
 - Rune takes issues, not pull requests.
 - Check UI work headlessly with the built binary, from a repository: `--script steps.json --snap out.png --at mark:end --size 1500x950 --theme dark`, or `--tree out.json` for element keys. Data loads in the background, so wait for it with a script rather than a bare `--snap`: `[{"t":0.4,"type":"tap","key":"#2/segment1"},{"t":1.2,"type":"mark","name":"end"}]`.
+- The diff's "+" only takes a press once its row is hovered: `move` to the row in an earlier step, then `tap` the `plus` key.
 - Sources of truth: `research/rune/crates/rune/README.md`, `research/rune/crates/rune-kit/README.md`, and `research/rune/crates/rune-kit/examples/`.
 
 ## Invariants

@@ -1,6 +1,7 @@
 //! A review-first Git desktop app.
 
 mod app;
+mod comments;
 mod git;
 mod overview;
 mod review;
@@ -11,6 +12,7 @@ use std::process::ExitCode;
 use rune::{App, AppSpec};
 
 use app::State;
+use comments::Comments;
 use git::Repo;
 
 const NAME: &str = "diffactive";
@@ -31,6 +33,7 @@ fn main() -> ExitCode {
         families: ("Inter", "ui-monospace, Inter"),
         ..AppSpec::new(NAME, WINDOW_SIZE, || unreachable!("App::init builds the state"), view::view)
     };
-    App::new(spec).init(move || State::new(repo)).modifier_keys().run();
+    let comments = Comments::load(repo.clone());
+    App::new(spec).init(move || State::new(repo, comments)).modifier_keys().run();
     ExitCode::SUCCESS
 }

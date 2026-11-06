@@ -682,6 +682,8 @@ version = "0.0.1"
 dependencies = [
  "rune",
  "rune-kit",
+ "serde",
+ "serde_json",
  "tempfile",
 ]
 
