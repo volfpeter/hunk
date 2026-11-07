@@ -16,6 +16,7 @@ Plan and task list: `docs/plans/0001-approach.md`. Read it before starting work.
 
 - Take the next open task in the plan. Its step's context says what you need to get started.
 - Mark a task done in the plan once it works and is verified. Add anything later tasks need to know to that step's context.
+- Add what a person can now do to `docs/features.md`, unticked. Only Peter ticks it.
 - When a step's last task is done, stop with a runnable app, screenshots and a list of what to try. Peter reviews the UI before the next step starts.
 - Fix a problem everywhere it applies, not only where you noticed it. Record Rune traps in `docs/rune-quirks.md`.
 - Agent docs hold only what the code can't tell: intent, decisions and traps. Leave out what an agent can find by reading, and anything routine commits would make stale, like names and exact values.
@@ -23,7 +24,7 @@ Plan and task list: `docs/plans/0001-approach.md`. Read it before starting work.
 
 ## Layout
 
-- `docs/plans/` holds numbered plans and decisions. `docs/how-to-use.md` is the user guide: usage goes there, not in the README. `docs/rune-quirks.md`: read before UI work.
+- `docs/plans/` holds numbered plans and decisions. `docs/how-to-use.md` is the user guide: usage goes there, not in the README. `docs/features.md` lists what the app does, for Peter to try. `docs/rune-quirks.md`: read before UI work.
 - `research/`: gitignored, may be missing. Reference checkouts of `anomalyco/rune`, `moritzwilksch/diffle`, `pierrecomputer/pierre` and `jesseduffield/lazygit` (clone what you need), spikes, and `demo-repo/` for trying the app. Read them, never depend on them.
 
 ## Commands

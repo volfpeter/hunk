@@ -1,8 +1,8 @@
 # diffactive
 
-A simple desktop app for reviewing Git changes, built with [Rune](https://github.com/anomalyco/rune). Review your uncommitted work, commits, branches and stashes, and leave comments to hand to a coding agent.
+A simple desktop app for reviewing Git changes, built with [Rune](https://github.com/anomalyco/rune). Review your uncommitted work, commits, branches and stashes, leave comments to hand to a coding agent, and stage, commit and push what's good.
 
-Early: it shows diffs and keeps review comments, but doesn't change your repository yet. So far it has only been tried on Linux with Wayland.
+Early: so far it has only been tried on Linux with Wayland.
 
 ## Try it
 

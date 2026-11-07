@@ -1,11 +1,13 @@
 //! A review-first Git desktop app.
 
+mod action;
 mod app;
 mod comments;
 mod git;
 mod overview;
 mod review;
 mod view;
+mod watch;
 
 use std::process::ExitCode;
 

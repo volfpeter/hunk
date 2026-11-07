@@ -1,4 +1,7 @@
-//! What a repository offers for review: its commits, branches and stashes.
+//! What a repository offers for review: its commits, branches and stashes, and where its files
+//! and branch stand.
+
+use std::collections::HashMap;
 
 use crate::git::{Repo, Result};
 
@@ -15,6 +18,21 @@ pub struct Entry {
     pub detail: String,
 }
 
+/// What is uncommitted about a file.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct FileStatus {
+    pub staged: bool,
+    /// Changed since it was staged, or not tracked yet.
+    pub unstaged: bool,
+}
+
+/// How far the current branch and the branch it tracks have moved apart.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Upstream {
+    pub ahead: u32,
+    pub behind: u32,
+}
+
 /// A repository's state, as of one load.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Overview {
@@ -25,6 +43,10 @@ pub struct Overview {
     pub commits: Vec<Entry>,
     pub branches: Vec<Entry>,
     pub stashes: Vec<Entry>,
+    /// Every file with something uncommitted about it, by path.
+    pub files: HashMap<String, FileStatus>,
+    /// `None` when the current branch tracks nothing.
+    pub upstream: Option<Upstream>,
 }
 
 impl Overview {
@@ -36,7 +58,13 @@ impl Overview {
             commits: commits(repo)?,
             branches,
             stashes: stashes(repo)?,
+            files: file_statuses(repo)?,
+            upstream: upstream(repo)?,
         })
+    }
+
+    pub fn staged_files(&self) -> usize {
+        self.files.values().filter(|file| file.staged).count()
     }
 }
 
@@ -96,6 +124,26 @@ fn stashes(repo: &Repo) -> Result<Vec<Entry>> {
         .collect())
 }
 
+fn file_statuses(repo: &Repo) -> Result<HashMap<String, FileStatus>> {
+    let status = repo.run(&["status", "--porcelain", "-z", "--untracked-files=all", "--no-renames"])?;
+    Ok(status
+        .split_terminator('\0')
+        .filter_map(|record| {
+            let (index, worktree, path) = (record.get(0..1)?, record.get(1..2)?, record.get(3..)?);
+            Some((path.to_owned(), FileStatus { staged: !matches!(index, " " | "?"), unstaged: worktree != " " }))
+        })
+        .collect())
+}
+
+fn upstream(repo: &Repo) -> Result<Option<Upstream>> {
+    if repo.head_commit()?.is_none() || repo.commit("@{upstream}")?.is_none() {
+        return Ok(None);
+    }
+    let counts = repo.run(&["rev-list", "--left-right", "--count", "@{upstream}...HEAD"])?;
+    let mut counts = counts.split_whitespace().filter_map(|count| count.parse().ok());
+    Ok(counts.next().zip(counts.next()).map(|(behind, ahead)| Upstream { ahead, behind }))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -120,6 +168,55 @@ mod tests {
         assert_eq!(branches, ["feature", "main"]);
         assert_eq!(overview.stashes[0].id, fixture.git(&["rev-parse", "--short", "stash@{0}"]).trim());
         assert!(overview.stashes[0].title.contains("parked"));
+    }
+
+    #[test]
+    fn says_what_is_staged_and_what_is_not() {
+        let fixture = Fixture::new();
+        fixture.commit("both.txt", "one\n", "first");
+        fixture.commit("old.txt", "one\n", "second");
+        fixture.write("both.txt", "two\n");
+        fixture.git(&["add", "both.txt"]);
+        fixture.write("both.txt", "three\n");
+        fixture.git(&["mv", "old.txt", "moved.txt"]);
+        fixture.write("untracked.txt", "new\n");
+
+        let files = Overview::load(&fixture.repo).unwrap().files;
+
+        let status = |path: &str| files.get(path).map(|file| (file.staged, file.unstaged));
+        assert_eq!(status("both.txt"), Some((true, true)));
+        assert_eq!(status("old.txt"), Some((true, false)));
+        assert_eq!(status("moved.txt"), Some((true, false)));
+        assert_eq!(status("untracked.txt"), Some((false, true)));
+    }
+
+    #[test]
+    fn a_detached_head_or_a_missing_upstream_tracks_nothing() {
+        let fixture = Fixture::new();
+        fixture.commit("a.txt", "one\n", "first");
+        fixture.git(&["config", "branch.main.remote", "origin"]);
+        fixture.git(&["config", "branch.main.merge", "refs/heads/main"]);
+        assert_eq!(Overview::load(&fixture.repo).unwrap().upstream, None);
+
+        fixture.git(&["checkout", "-q", "--detach"]);
+        assert_eq!(Overview::load(&fixture.repo).unwrap().upstream, None);
+    }
+
+    #[test]
+    fn counts_commits_ahead_of_and_behind_the_upstream() {
+        let fixture = Fixture::new();
+        fixture.commit("a.txt", "one\n", "first");
+        assert_eq!(Overview::load(&fixture.repo).unwrap().upstream, None);
+
+        fixture.git(&["branch", "base"]);
+        fixture.git(&["branch", "--set-upstream-to=base"]);
+        fixture.commit("a.txt", "two\n", "second");
+        fixture.commit("a.txt", "three\n", "third");
+        fixture.git(&["checkout", "-q", "base"]);
+        fixture.commit("b.txt", "other\n", "elsewhere");
+        fixture.git(&["checkout", "-q", "main"]);
+
+        assert_eq!(Overview::load(&fixture.repo).unwrap().upstream, Some(Upstream { ahead: 2, behind: 1 }));
     }
 
     #[test]

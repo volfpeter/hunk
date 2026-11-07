@@ -28,6 +28,12 @@ const CONFIG: [&str; 14] = [
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct GitError(String);
 
+impl GitError {
+    pub fn new(message: impl Into<String>) -> GitError {
+        GitError(message.into())
+    }
+}
+
 impl fmt::Display for GitError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(&self.0)
@@ -51,6 +57,16 @@ impl Repo {
         let paths = run_in(dir, &["rev-parse", "--show-toplevel", "--absolute-git-dir"], &[0])?;
         let (root, git_dir) = paths.trim_end().split_once('\n').ok_or_else(|| GitError(format!("unexpected rev-parse output: {paths}")))?;
         Ok(Repo { root: PathBuf::from(root), git_dir: PathBuf::from(git_dir) })
+    }
+
+    /// The root of the worktree.
+    pub fn root(&self) -> &Path {
+        &self.root
+    }
+
+    /// The repository's git folder.
+    pub fn git_dir(&self) -> &Path {
+        &self.git_dir
     }
 
     /// The name of the worktree's root folder.
@@ -79,6 +95,24 @@ impl Repo {
         run_in(&self.root, args, ok_codes)
     }
 
+    /// [`Repo::run`] on `paths`, taken literally, or nothing without paths: git would take that
+    /// to mean every file. The flag rather than `GIT_LITERAL_PATHSPECS`, which would reach the
+    /// `:/` that `stash --include-untracked` passes to the `clean` it runs.
+    pub fn run_on(&self, args: &[&str], paths: &[String]) -> Result<String> {
+        if paths.is_empty() {
+            return Ok(String::new());
+        }
+        let paths = paths.iter().map(String::as_str);
+        self.run(&["--literal-pathspecs"].iter().chain(args).chain(&["--"]).copied().chain(paths).collect::<Vec<_>>())
+    }
+
+    /// Whether git ignores all of `paths`.
+    pub fn all_ignored(&self, paths: &[String]) -> Result<bool> {
+        let args: Vec<&str> = ["check-ignore", "--"].into_iter().chain(paths.iter().map(String::as_str)).collect();
+        let ignored = self.run_accepting(&args, &[0, 1])?;
+        Ok(ignored.lines().count() == paths.len())
+    }
+
     /// The commit `HEAD` points at, unless the current branch has none yet.
     pub fn head_commit(&self) -> Result<Option<String>> {
         self.commit("HEAD")
@@ -97,14 +131,17 @@ fn run_in(dir: &Path, args: &[&str], ok_codes: &[i32]) -> Result<String> {
         .args(args)
         .current_dir(dir)
         .env("GIT_OPTIONAL_LOCKS", "0")
+        .env("GIT_TERMINAL_PROMPT", "0")
         .stdin(Stdio::null())
         .output()
         .map_err(|e| GitError(format!("git {}: {e}", args.join(" "))))?;
+    let stdout = String::from_utf8_lossy(&output.stdout);
     if output.status.code().is_some_and(|code| ok_codes.contains(&code)) {
-        Ok(String::from_utf8_lossy(&output.stdout).into_owned())
-    } else {
-        Err(GitError(String::from_utf8_lossy(&output.stderr).trim().to_owned()))
+        return Ok(stdout.into_owned());
     }
+    // Commands that change things report some failures, like conflicts, on stdout.
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    Err(GitError([stdout.trim(), stderr.trim()].into_iter().filter(|part| !part.is_empty()).collect::<Vec<_>>().join("\n")))
 }
 
 #[cfg(test)]
@@ -138,6 +175,11 @@ pub mod testing {
 
         pub fn write(&self, path: &str, text: &str) {
             fs::write(self.dir.path().join(path), text).unwrap();
+        }
+
+        /// The worktree's file at `path`, unless it is gone.
+        pub fn read(&self, path: &str) -> Option<String> {
+            self.repo.worktree_file(path)
         }
 
         /// Writes `path` and commits it.
