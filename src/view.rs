@@ -13,6 +13,8 @@ use crate::comments::Comment;
 use crate::overview::{Entry, FileStatus};
 
 const BAR_HEIGHT: f32 = 48.0;
+/// The page showing between the sheets, and around them.
+const SHEET_GAP: f32 = 8.0;
 const PANEL_HEIGHT: f32 = 200.0;
 const DRAFT_ROWS: (usize, usize) = (3, 12);
 const COMMIT_ROWS: usize = 4;
@@ -51,7 +53,13 @@ pub fn view(s: &State, cx: &mut Cx<State>) -> El {
     new_branch_dialog(s, &k, &mut overlays);
     failure_dialog(s, &k, &mut overlays);
     palette_dialog(s, &k, &mut overlays);
-    root(col().fill(k.c.bg_base).child(bar(s, &k)).child(panel(s, &k)).child(main(s, &k)), overlays)
+    let sheets = col().w_full().grow(1.0).min_h(0.0).px(SHEET_GAP).pb(SHEET_GAP).gap(SHEET_GAP).child(panel(s, &k)).child(main(s, &k));
+    root(col().fill(k.c.page).child(bar(s, &k)).child(sheets), overlays)
+}
+
+/// `content` on a sheet of its own, apart from the page and the other sheets.
+fn sheet(k: &Kit, content: El) -> El {
+    content.fill(k.c.bg_base).border(1.0, k.c.border_base).radius(k.radius.lg).clip_rounded(k.radius.lg)
 }
 
 fn bar(s: &State, k: &Kit) -> El {
@@ -75,7 +83,6 @@ fn bar(s: &State, k: &Kit) -> El {
         .px(16.0)
         .gap(12.0)
         .items_center()
-        .fill(k.c.layer_01)
         .child(one_line(s.repo_name()).max_w(HEAD_MAX_WIDTH).font(k.ty.ui_medium).color(k.c.text_base))
         .child(one_line(s.overview.head.clone()).max_w(HEAD_MAX_WIDTH).font(k.ty.ui).color(k.c.text_muted))
         .child(kinds.build(k))
@@ -102,7 +109,7 @@ fn progress(k: &Kit, action: &str) -> El {
 /// The list to pick from, or the commit message when the kind has no list, beside the files of
 /// the review.
 fn panel(s: &State, k: &Kit) -> El {
-    let panel = row().key("panel").w_full().h(PANEL_HEIGHT).border(1.0, k.c.border_weak);
+    let panel = sheet(k, row().key("panel").w_full().h(PANEL_HEIGHT));
     panel.child(if s.kind.has_list() { entries(s, k) } else { commit_box(s, k) }).child(files(s, k))
 }
 
@@ -189,26 +196,6 @@ fn list_header(k: &Kit, summary: String) -> El {
 }
 
 fn files(s: &State, k: &Kit) -> El {
-    let (added, removed) = s.diff.files().iter().fold((0, 0), |(a, r), file| (a + file.additions(), r + file.deletions()));
-    let count = match s.diff.files().len() {
-        1 => "1 file".to_owned(),
-        n => format!("{n} files"),
-    };
-    let title = s.review().map_or_else(String::new, |review| review.title());
-    let split = s.diff.mode() == DiffMode::Split;
-    let modes = SegmentedControl::new(&["Unified", "Split"], Some(split as usize)).fit().on_pick(|s: &mut State, i, tx: &mut Tx| {
-        tx.motion(rune::tok::motion::SNAPPY);
-        s.diff.set_mode(if i == 1 { DiffMode::Split } else { DiffMode::Unified });
-    });
-    let summary = row()
-        .w_full()
-        .gap(12.0)
-        .px(8.0)
-        .items_center()
-        .child(one_line(title).font(k.ty.ui_medium).color(k.c.text_base))
-        .child(one_line(format!("{count}  +{added} −{removed}")).font(k.ty.ui).color(k.c.text_muted))
-        .child(row().grow(1.0))
-        .child(modes.build(k));
     let statuses = if s.reviews_worktree() { s.overview.files.clone() } else { HashMap::new() };
     let tree = Tree::new(|s: &State| &s.files, |s: &mut State| &mut s.files, FileNode::label)
         .name("Changed files")
@@ -228,16 +215,17 @@ fn files(s: &State, k: &Kit) -> El {
         .build(s, k)
         .grow(1.0)
         .min_h(0.0);
-    col().key("files-column").grow(1.0).min_w(0.0).h_full().padding(8.0).gap(4.0).child(summary).child(tree)
+    col().key("files-column").grow(1.0).min_w(0.0).h_full().padding(8.0).child(tree)
 }
 
 fn main(s: &State, k: &Kit) -> El {
-    let area = col().key("main").w_full().grow(1.0).min_h(0.0);
+    let area = sheet(k, col().key("main").w_full().grow(1.0).min_h(0.0));
     if let Some(error) = &s.error {
         return area.center().padding(16.0).child(text(error.clone()).font(k.ty.ui).color(k.c.text_muted).wrap_anywhere());
     }
     let watch_error = s.watch_error.as_ref().map(|error| format!("Changes won't show up by themselves, so press Refresh. {error}"));
     let area = area
+        .child(diff_status(s, k))
         .children(s.comments.error.as_ref().map(|error| error_line(k, error)))
         .children(watch_error.as_ref().map(|error| error_line(k, error)))
         .children(s.draft_unplaced().then(|| note(k, composer(s, k))))
@@ -252,6 +240,32 @@ fn main(s: &State, k: &Kit) -> El {
         .annotation(move |s: &State, annotation: &Annotation| annotated(s, &annotation_kit, annotation))
         .header_actions(move |s: &State, file| file_actions(s, &header_kit, file));
     area.child(diff.build(s, k))
+}
+
+/// What the diff compares and how much changed, and how it is laid out.
+fn diff_status(s: &State, k: &Kit) -> El {
+    let (added, removed) = s.diff.files().iter().fold((0, 0), |(a, r), file| (a + file.additions(), r + file.deletions()));
+    let count = match s.diff.files().len() {
+        1 => "1 file".to_owned(),
+        n => format!("{n} files"),
+    };
+    let title = s.review().map_or_else(String::new, |review| review.title());
+    let split = s.diff.mode() == DiffMode::Split;
+    let modes = SegmentedControl::new(&["Unified", "Split"], Some(split as usize)).fit().on_pick(|s: &mut State, i, tx: &mut Tx| {
+        tx.motion(rune::tok::motion::SNAPPY);
+        s.diff.set_mode(if i == 1 { DiffMode::Split } else { DiffMode::Unified });
+    });
+    let status = row()
+        .w_full()
+        .gap(12.0)
+        .px(12.0)
+        .py(6.0)
+        .items_center()
+        .child(one_line(title).font(k.ty.ui_medium).color(k.c.text_base))
+        .child(one_line(format!("{count}  +{added} −{removed}")).font(k.ty.ui).color(k.c.text_muted))
+        .child(row().grow(1.0))
+        .child(modes.build(k));
+    col().key("diff-status").w_full().child(status).child(row().w_full().h(1.0).fill(k.c.border_weak))
 }
 
 fn error_line(k: &Kit, error: &str) -> El {
@@ -472,9 +486,18 @@ fn palette_dialog(s: &State, k: &Kit, overlays: &mut Vec<El>) {
             _ => edit_by_word(&mut s.palette_text, event),
         });
     let commands = s.palette_commands().into_iter().enumerate().fold(List::new().active(Some(active)).empty_message("Nothing matches"), |list, (row, command)| {
-        list.item(ListItem::new(command.label).on_select(move |s: &mut State, tx: &mut Tx| s.run_command(row, tx)))
+        let title = match command.shortcut {
+            Some(shortcut) => format!("{}   {shortcut}", command.title()),
+            None => command.title(),
+        };
+        list.item(ListItem::new(title).on_select(move |s: &mut State, tx: &mut Tx| s.run_command(row, tx)))
     });
     Dialog::new("palette", "Commands").width(PALETTE_WIDTH).fit().open(true).on_close(State::close_palette).child(col().w_full().px(16.0).pb(16.0).gap(12.0).child(field.build(k)).child(commands.build(k))).build(k, overlays);
+    // Dialog pushes the layer centring its panel last. Pinned to the top instead, the palette
+    // holds still as its list shrinks.
+    if let Some(layer) = overlays.pop() {
+        overlays.push(layer.items_start());
+    }
 }
 
 #[cfg(test)]

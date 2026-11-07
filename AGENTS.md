@@ -7,7 +7,7 @@ Plan and task list: `docs/plans/0001-approach.md`. Read it before starting work.
 ## Product rules
 
 - Everything is a **Review**: a comparison between two points. The diff is the centre of the app.
-- Simple and intuitive beats dense. Visible controls first; shortcuts are an extra. lazygit is only a bucket of features, most of which we do not want: never copy its layout or key-driven handling.
+- Simple and intuitive beats dense. Major actions get a visible control where they have a good place; the rest can live in menus and the palette. lazygit is only a bucket of features, most of which we do not want: never copy its layout or key-driven handling.
 - Keep the width for the diff: side-by-side needs it. Lists sit above the diff, not beside it.
 - Start simple. Skip uncommon cases until they hurt; iterate from something that runs. Product scope stays small, code quality does not.
 - Stack stays simple: built-in Rune components and syntax highlighting, no extra frameworks.

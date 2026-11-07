@@ -1,6 +1,6 @@
 # 0001: Approach
 
-Status: step 3 done, waiting for Peter's UI review. See [Tasks](#tasks).
+Status: step 4a done, waiting for Peter's UI review. See [Tasks](#tasks).
 
 ## Intent
 
@@ -106,17 +106,39 @@ Tasks:
 - [x] Pull and push
 - [x] Command palette over the same actions
 
-### Step 4a: Palette and navigation
+### DONE - Step 4a: Palette and navigation
 
 The palette from step 3 lists what is possible right now. Extend it, but don't overdo it. A file in the diff collapses only from its chevron, which Rune builds: Peter accepts that, so no Rune issue.
 
+The palette's keys sit in the row's label, because Rune's `List` has no slot for them (see `docs/rune-quirks.md`). Commands carry a topic, shown as a prefix and ordered by it: `List`'s group headers repeated the prefix and cost too much height.
+
 Tasks:
 
-- [ ] Open the palette with Ctrl+Shift+P too, keeping Ctrl+K
-- [ ] Navigation in the palette, showing the keys the diff already has: next and previous file and hunk
-- [ ] Switch the review kind from the palette
+- [x] Open the palette with Ctrl+Shift+P too, keeping Ctrl+K
+- [x] Navigation in the palette, showing the keys the diff already has: next and previous file and hunk
+- [x] Switch the review kind from the palette
+- [x] Stage and unstage everything from the palette
 
-### Step 4b: Open a repository
+### Step 4b: Commit and stash
+
+Staged vs unstaged is the review Peter finds most useful, since staging takes what he has reviewed out of the way. But it hides what is staged, so he can't see what a commit would take. The message box above the diff, with Commit and Stash below it, goes: both become dialogs.
+
+That frees the panel's left half in Changes and Staged vs unstaged, and the panel holds two file trees there: staged on the left, unstaged on the right, lined up with the split diff's sides. The right one is today's tree, now without the staged files. A partly staged file is in both. The other reviews keep their list on the left and their files on the right.
+
+Keep in mind:
+
+- The staged tree is for seeing and unstaging, and must look it: in Staged vs unstaged its files are often not in the diff. If clicking through turns out to be missed, the likely answer is showing what is staged (`HEAD` vs index) in the diff.
+- In Changes every file is in the diff, so both trees can jump to it.
+- A failed commit keeps its message today. The dialog must too, and a message shouldn't be lost by closing it.
+- Stash takes new files too today. The choices map to `git stash push`'s `--include-untracked` and `--staged` (git 2.35 and later), and the name to `-m`.
+
+Tasks:
+
+- [ ] Show staged and unstaged files apart, in Changes and Staged vs unstaged
+- [ ] Commit from a dialog, replacing the message box and its buttons
+- [ ] Stash from a dialog: name the stash and pick what goes: tracked changes, those and new files, or only what's staged
+
+### Step 4c: Open a repository
 
 Switching repositories is the hard part: comments, the watcher, the loads and all the state belong to one repository. Refactor for it first, before more features build on the one-repository shape.
 
@@ -133,13 +155,17 @@ Tasks:
 - [ ] Start as Zed does: the folder passed, else the last repository, else an empty window
 - [ ] Name the repository `<user-or-org>/<project>`
 
-### Step 4c: UI refinements
+### Step 4d: UI refinements
 
 Peter dislikes the always-visible top panel. A left sidebar is doubtful too, because side-by-side diffs need the width, so moving the panel to the side is unlikely to be the fix. lazygit's layout is not a reference.
 
+The panel's trouble was a lack of purpose, filled with whatever needed a place, and weak separation from the diff. Step 4b gives it a purpose in Changes and Staged vs unstaged, the staged and unstaged trees, so the fix may be its design rather than its removal.
+
+A first step is done: the panel and the diff are sheets on a darker page, and the diff has a status row of its own, with the summary and Unified/Split. Still open: collapsing the panel, to one line saying what is under review rather than to nothing, with a key.
+
 Tasks:
 
-- [ ] Replace the always-visible top panel (the bar also overflows narrow windows, which hides Pull and Push)
+- [ ] Rework the top panel: a clear purpose in every review, and clear separation from the diff (the bar also overflows narrow windows, which hides Pull and Push)
 - [ ] Stop new files wasting half of the split view (may need a Rune issue)
 - [ ] Decide what picking the default branch should show (it's empty today)
 

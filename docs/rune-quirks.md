@@ -26,6 +26,7 @@ Check with a long string without spaces, in a narrow window.
 
 - A dialog opens focused on its close button, so Enter dismisses it.
 - Short dialogs need `.fit()`, or they stay at the standard height.
+- `Dialog` always centres its panel. To place it elsewhere, re-align the layer it pushes last, as the palette does.
 
 ## The diff
 
@@ -39,6 +40,7 @@ Check with a long string without spaces, in a narrow window.
 
 - `SegmentedControl` makes every segment as wide as the widest, so one long label costs six times over.
 - `List` cuts long labels at the end, so give it the file name rather than a path.
+- `ListItem` has no slot for a shortcut, unlike `MenuItem`, so a key can only go in the label.
 
 ## Headless scripts
 
@@ -47,3 +49,4 @@ Check with a long string without spaces, in a narrow window.
 - The diff's "+" only takes a press once its row is hovered, so `move` there in an earlier step.
 - `scroll` needs an `x` and `y` over the view, and a negative `dy` scrolls down.
 - The script's clock runs about twice as fast as real time, which matters when changing files from outside during a run.
+- `type` enters its text over several frames. A key sent soon after lands mid-text, so leave a gap before Enter.

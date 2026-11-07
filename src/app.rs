@@ -2,7 +2,7 @@
 
 use std::time::Duration;
 
-use rune::{Key, KeyEvent, Latest, TextEdit, Tx, Waker};
+use rune::{KeyEvent, Latest, TextEdit, Tx, Waker};
 use rune_kit::diff::{Annotation, DiffMode, DiffState, FileDiff, LineRange, parse};
 use rune_kit::{FileNode, FileTree, TreeModel};
 
@@ -75,11 +75,32 @@ pub struct ActionFailure {
     pub message: String,
 }
 
+/// What a palette command does.
+type Run = Box<dyn Fn(&mut State, &mut Tx)>;
+
 /// Something the command palette offers.
-#[derive(Clone)]
 pub struct Command {
+    /// What it concerns, such as "Git".
+    topic: &'static str,
     pub label: String,
-    run: fn(&mut State, &mut Tx),
+    /// The key that does the same outside the palette.
+    pub shortcut: Option<&'static str>,
+    run: Run,
+}
+
+impl Command {
+    fn new(topic: &'static str, label: impl Into<String>, run: impl Fn(&mut State, &mut Tx) + 'static) -> Command {
+        Command { topic, label: label.into(), shortcut: None, run: Box::new(run) }
+    }
+
+    fn shortcut(self, key: &'static str) -> Command {
+        Command { shortcut: Some(key), ..self }
+    }
+
+    /// Its topic and label, as one line.
+    pub fn title(&self) -> String {
+        format!("{}: {}", self.topic, self.label)
+    }
 }
 
 pub struct State {
@@ -202,7 +223,7 @@ impl State {
     }
 
     pub fn on_key(&mut self, event: &KeyEvent, tx: &mut Tx) -> bool {
-        if event.key == Key::Command('k') {
+        if event.is_command('k') || (event.is_command('p') && event.mods.shift) {
             if !self.dialog_open() {
                 self.open_palette();
             }
@@ -537,8 +558,8 @@ impl State {
         let typed = self.palette_text.text.to_lowercase();
         let mut commands = self.commands();
         commands.retain(|command| {
-            let label = command.label.to_lowercase();
-            typed.split_whitespace().all(|word| label.contains(word))
+            let title = command.title().to_lowercase();
+            typed.split_whitespace().all(|word| title.contains(word))
         });
         commands
     }
@@ -581,35 +602,58 @@ impl State {
         self.refresh();
     }
 
-    /// Everything available right now. Actions on a file act on the one at the top of the diff.
+    /// Everything available right now, by topic. Actions on a file act on the one at the top of
+    /// the diff.
     fn commands(&self) -> Vec<Command> {
         let mut commands = Vec::new();
-        let mut offer = |available: bool, label: String, run: fn(&mut State, &mut Tx)| {
+        let mut offer = |available: bool, command: Command| {
             if available {
-                commands.push(Command { label, run });
+                commands.push(command);
             }
         };
         let idle = self.running.is_none();
         let file = self.diff.visible_file();
+        let files = self.diff.files().len();
         let name = self.diff.files().get(file).and_then(|diff| diff.path().rsplit('/').next()).unwrap_or_default();
-        offer(idle && !self.stageable(file).is_empty(), format!("Stage {name}"), |s, _| s.stage_file(s.diff.visible_file()));
-        offer(idle && !self.unstageable(file).is_empty(), format!("Unstage {name}"), |s, _| s.unstage_file(s.diff.visible_file()));
-        offer(idle && !self.discardable(file).is_empty(), format!("Discard {name}"), |s, _| s.ask_to_discard(s.diff.visible_file()));
-        offer(idle, "Write commit message".to_owned(), |s, _| s.write_commit_message());
-        offer(self.can_stash(), "Stash changes".to_owned(), |s, _| s.run(Action::Stash));
+
+        offer(idle && !self.stageable(file).is_empty(), Command::new("File", format!("Stage {name}"), |s, _| s.stage_file(s.diff.visible_file())));
+        offer(idle && !self.unstageable(file).is_empty(), Command::new("File", format!("Unstage {name}"), |s, _| s.unstage_file(s.diff.visible_file())));
+        offer(idle && !self.discardable(file).is_empty(), Command::new("File", format!("Discard {name}"), |s, _| s.ask_to_discard(s.diff.visible_file())));
+
+        type Step = fn(&mut DiffState, bool, &mut Tx) -> bool;
+        let moves: [(bool, &str, &'static str, Step, bool); 4] = [
+            (file + 1 < files, "Next file", "]", DiffState::next_file, true),
+            (file > 0, "Previous file", "[", DiffState::next_file, false),
+            (files > 0, "Next hunk", "j", DiffState::next_hunk, true),
+            (files > 0, "Previous hunk", "k", DiffState::next_hunk, false),
+        ];
+        for (available, label, key, step, forward) in moves {
+            offer(available, Command::new("Go to", label, move |s, tx| _ = step(&mut s.diff, forward, tx)).shortcut(key));
+        }
+
+        for kind in Kind::ALL {
+            offer(kind != self.kind, Command::new("Review", kind.label(), move |s, _| s.select_kind(kind)));
+        }
+
+        let any = |test: fn(&FileStatus) -> bool| self.overview.files.values().any(test);
+        offer(idle && any(|status| status.unstaged), Command::new("Git", "Stage all", |s, _| s.run(Action::StageAll)));
+        offer(idle && any(|status| status.staged), Command::new("Git", "Unstage all", |s, _| s.run(Action::UnstageAll)));
+        offer(idle, Command::new("Git", "Commit", |s, _| s.write_commit_message()));
+        offer(self.can_stash(), Command::new("Git", "Stash", |s, _| s.run(Action::Stash)));
         if let Some(stash) = self.selected_stash() {
-            offer(idle, format!("Apply stash {stash}"), |s, _| s.apply_selected_stash());
-            offer(idle, format!("Pop stash {stash}"), |s, _| s.pop_selected_stash());
-            offer(idle, format!("Drop stash {stash}"), |s, _| s.ask_to_drop_stash());
+            offer(idle, Command::new("Git", format!("Apply stash {stash}"), |s, _| s.apply_selected_stash()));
+            offer(idle, Command::new("Git", format!("Pop stash {stash}"), |s, _| s.pop_selected_stash()));
+            offer(idle, Command::new("Git", format!("Drop stash {stash}"), |s, _| s.ask_to_drop_stash()));
         }
         if let Some(branch) = self.branch_to_check_out() {
-            offer(idle, format!("Check out {branch}"), |s, _| s.check_out_selected());
+            offer(idle, Command::new("Git", format!("Check out {branch}"), |s, _| s.check_out_selected()));
         }
-        offer(idle, "New branch".to_owned(), |s, _| s.start_new_branch());
-        offer(idle, "Pull".to_owned(), |s, _| s.run(Action::Pull));
-        offer(self.can_push(), "Push".to_owned(), |s, _| s.run(Action::Push));
-        offer(!self.comments.open().is_empty(), "Copy prompt".to_owned(), State::copy_prompt);
-        offer(true, "Refresh".to_owned(), |s, _| s.refresh());
+        offer(idle, Command::new("Git", "New branch", |s, _| s.start_new_branch()));
+        offer(idle, Command::new("Git", "Pull", |s, _| s.run(Action::Pull)));
+        offer(self.can_push(), Command::new("Git", "Push", |s, _| s.run(Action::Push)));
+        offer(true, Command::new("Git", "Refresh", |s, _| s.refresh()));
+
+        offer(!self.comments.open().is_empty(), Command::new("Comments", "Copy prompt", State::copy_prompt));
         commands
     }
 
@@ -808,6 +852,8 @@ fn comment_entry(comment: &Comment) -> Entry {
 mod tests {
     use std::collections::HashMap;
 
+    use rune::Key;
+
     use super::*;
     use crate::git::testing::Fixture;
     use crate::overview::Upstream;
@@ -983,6 +1029,45 @@ mod tests {
         state.cancel_action();
         state.on_key(&ctrl_k, &mut Tx::default());
         assert_eq!(state.palette, Some(0));
+    }
+
+    #[test]
+    fn ctrl_shift_p_opens_the_palette_but_ctrl_p_does_not() {
+        let (_fixture, mut state) = state();
+        let ctrl_p = |shift| KeyEvent { key: Key::Command('p'), mods: rune::Mods { ctrl: true, cmd: true, shift, ..rune::Mods::default() } };
+
+        state.on_key(&ctrl_p(false), &mut Tx::default());
+        assert_eq!(state.palette, None);
+
+        state.on_key(&ctrl_p(true), &mut Tx::default());
+        assert_eq!(state.palette, Some(0));
+    }
+
+    #[test]
+    fn the_palette_offers_only_the_moves_the_diff_can_make() {
+        let (_fixture, mut state) = state();
+        let labels = |state: &State| state.commands().into_iter().map(|command| command.label).collect::<Vec<_>>();
+        assert!(!labels(&state).iter().any(|label| label.starts_with("Next") || label.starts_with("Previous")));
+
+        land(&mut state, Review::Changes, TWO_FILES);
+        let first = labels(&state);
+        assert!(first.contains(&"Next file".to_owned()) && !first.contains(&"Previous file".to_owned()), "{first:?}");
+
+        state.diff.scroll_to_file(1, &mut Tx::default());
+        let last = labels(&state);
+        assert!(!last.contains(&"Next file".to_owned()) && last.contains(&"Previous file".to_owned()), "{last:?}");
+    }
+
+    #[test]
+    fn the_palette_switches_to_any_other_review_kind() {
+        let (_fixture, mut state) = state();
+        state.open_palette();
+        state.palette_text = TextEdit::new("review".to_owned());
+        let labels: Vec<String> = state.palette_commands().into_iter().map(|command| command.label).collect();
+        assert_eq!(labels, ["Staged vs unstaged", "Commits", "Branches", "Stashes", "Comments"]);
+
+        state.run_command(1, &mut Tx::default());
+        assert_eq!(state.kind, Kind::Commits);
     }
 
     #[test]

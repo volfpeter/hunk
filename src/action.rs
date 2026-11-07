@@ -7,6 +7,9 @@ use crate::git::{GitError, Repo, Result};
 pub enum Action {
     Stage(Vec<String>),
     Unstage(Vec<String>),
+    /// Stages every change, new and deleted files too.
+    StageAll,
+    UnstageAll,
     /// Takes the files back to `HEAD`, deleting those it doesn't have.
     DiscardChanges(Vec<String>),
     /// Takes the files back to what is staged, deleting untracked ones.
@@ -28,6 +31,8 @@ impl Action {
         match self {
             Action::Stage(_) => "Stage",
             Action::Unstage(_) => "Unstage",
+            Action::StageAll => "Stage all",
+            Action::UnstageAll => "Unstage all",
             Action::DiscardChanges(_) | Action::DiscardUnstaged(_) => "Discard",
             Action::Commit(_) => "Commit",
             Action::Checkout(_) => "Check out",
@@ -45,6 +50,8 @@ impl Action {
         match self {
             Action::Stage(paths) => repo.run_on(&["add", "--all"], paths).map(drop),
             Action::Unstage(paths) => unstage(repo, paths),
+            Action::StageAll => repo.run(&["add", "--all"]).map(drop),
+            Action::UnstageAll => repo.run(&["reset", "-q"]).map(drop),
             Action::DiscardChanges(paths) => unstage(repo, paths).and_then(|()| discard_unstaged(repo, paths)),
             Action::DiscardUnstaged(paths) => discard_unstaged(repo, paths),
             Action::Commit(message) => repo.run(&["commit", "-m", message]).map(drop),
@@ -127,6 +134,19 @@ mod tests {
 
         Action::Unstage(all).run(&fixture.repo).unwrap();
         assert_eq!(status(&fixture), " M a.txt\n D gone.txt\n?? new.txt\n");
+    }
+
+    #[test]
+    fn stages_and_unstages_everything_even_before_the_first_commit() {
+        let fixture = Fixture::new();
+        fixture.write("a.txt", "one\n");
+        fixture.write("b.txt", "two\n");
+
+        Action::StageAll.run(&fixture.repo).unwrap();
+        assert_eq!(status(&fixture), "A  a.txt\nA  b.txt\n");
+
+        Action::UnstageAll.run(&fixture.repo).unwrap();
+        assert_eq!(status(&fixture), "?? a.txt\n?? b.txt\n");
     }
 
     #[test]

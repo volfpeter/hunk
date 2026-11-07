@@ -46,6 +46,7 @@ Everything the app does, to try at your own pace. A tick means Peter tried it an
 
 - [ ] Stage a file
 - [ ] Unstage a file
+- [ ] Stage and unstage everything, from the palette
 - [ ] File list marks staged and partly staged files
 - [ ] Commit, with a multi-line message
 - [ ] A failed commit keeps its message
@@ -66,4 +67,8 @@ Everything the app does, to try at your own pace. A tick means Peter tried it an
 
 - [ ] Ctrl+K opens the palette, with what's possible right now
 - [ ] Filter by typing, pick with the arrow keys, run with Enter
+- [ ] Commands are grouped by topic, and typing a topic filters to it
 - [ ] File commands act on the file at the top of the diff
+- [ ] Ctrl+Shift+P opens the palette too
+- [ ] Next and previous file and hunk from the palette, showing their keys
+- [ ] Switch to any other review from the palette
