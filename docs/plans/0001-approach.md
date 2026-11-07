@@ -44,6 +44,7 @@ Side-by-side diffs need the width, so nothing sits beside the diff. A bar picks 
 - **File-level operations only** for now.
 - **`notify` for watching.** Polling git would be dependency-free but spawns processes forever and still needs file stats to see further edits to a changed file.
 - **One file order, by path.** The file list's, folders first, and the diff follows it.
+- **`dirs` for app folders.** Small, and knows each platform's places.
 - **Comments go to agents first.** Each stores path, side, line range and commit, enough to submit to a forge later. No destination abstraction until then.
 
 ## Tasks
@@ -105,7 +106,34 @@ Tasks:
 - [x] Pull and push
 - [x] Command palette over the same actions
 
-### Step 4: UI refinements
+### Step 4a: Palette and navigation
+
+The palette from step 3 lists what is possible right now. Extend it, but don't overdo it. A file in the diff collapses only from its chevron, which Rune builds: Peter accepts that, so no Rune issue.
+
+Tasks:
+
+- [ ] Open the palette with Ctrl+Shift+P too, keeping Ctrl+K
+- [ ] Navigation in the palette, showing the keys the diff already has: next and previous file and hunk
+- [ ] Switch the review kind from the palette
+
+### Step 4b: Open a repository
+
+Switching repositories is the hard part: comments, the watcher, the loads and all the state belong to one repository. Refactor for it first, before more features build on the one-repository shape.
+
+- **One dialog** for recents and the file system, on Ctrl+O and on the repository name in the bar. Empty, it lists recent repositories, newest first, dropping those that no longer exist. Typing a path like `~/dev/p/diffactive` completes folders and marks which are repositories. Listing folders is IO, so it stays off the UI thread.
+- **Start as Zed does, never in the dialog.** Only a folder passed as an argument counts (`diffactive .`), never the current one, so a launcher and a terminal behave alike. A folder inside a repository opens that repository. A folder that isn't in one shows a placeholder: initialise it with one click, or open a project. With no folder, the last repository opens if it still exists. Otherwise an empty window offers "Open a repository" and its hotkey, without init, since nobody picked a folder. When this lands, `cargo run` needs `-- .` to review the current folder: update the commands in `AGENTS.md`.
+- **The repository name** reads `<user-or-org>/<project>`, from `origin`'s URL, else the first remote's, else the folder's name.
+- **Recents are app state**, in `dirs`' state folder, or its data folder where there is none (macOS). The only state outside `<git-dir>/diffactive/`: add it to the invariants when it lands.
+
+Tasks:
+
+- [ ] Let the app switch repositories
+- [ ] Open dialog with recents and path completion
+- [ ] Remember recent repositories, forgetting those that are gone
+- [ ] Start as Zed does: the folder passed, else the last repository, else an empty window
+- [ ] Name the repository `<user-or-org>/<project>`
+
+### Step 4c: UI refinements
 
 Peter dislikes the always-visible top panel. A left sidebar is doubtful too, because side-by-side diffs need the width, so moving the panel to the side is unlikely to be the fix. lazygit's layout is not a reference.
 
