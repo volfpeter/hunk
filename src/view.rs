@@ -1,16 +1,14 @@
 //! The window: a bar to pick what to review, the lists behind that choice, and the diff.
 
-use std::collections::HashMap;
-
 use rune::{Cx, El, ScrollSpec, TextEdit, Tx, col, row, text};
 use rune::{Key, KeyEvent, Mods};
 use rune_kit::diff::{Annotation, DiffMode, DiffView};
-use rune_kit::{Badge, Button, ButtonVariant, ControlSize, Dialog, FileNode, Kit, List, ListItem, SegmentedControl, Spinner, TextArea, TextInput, Tree, TreeItem, root};
+use rune_kit::{Badge, Button, ButtonVariant, ControlSize, Dialog, FileNode, Kit, RadioGroup, RadioItem, SegmentedControl, Spinner, TextArea, TextInput, Tree, TreeItem, TreeModel, TreeStyle, root};
 
-use crate::action::Action;
-use crate::app::{DRAFT_NOTE, Kind, State};
+use crate::action::{Action, Stashed};
+use crate::app::{Command, DRAFT_NOTE, Kind, State};
 use crate::comments::Comment;
-use crate::overview::{Entry, FileStatus};
+use crate::overview::{Entry, LineCounts};
 
 const BAR_HEIGHT: f32 = 48.0;
 /// The page showing between the sheets, and around them.
@@ -19,10 +17,13 @@ const PANEL_HEIGHT: f32 = 200.0;
 const DRAFT_ROWS: (usize, usize) = (3, 12);
 const COMMIT_ROWS: usize = 4;
 const CONFIRM_WIDTH: f32 = 400.0;
+const COMMIT_WIDTH: f32 = 560.0;
 const FAILURE_WIDTH: f32 = 640.0;
 /// The most height git's output takes in a dialog before it scrolls.
 const FAILURE_MAX_HEIGHT: f32 = 320.0;
 const PALETTE_WIDTH: f32 = 520.0;
+const PALETTE_ROW_HEIGHT: f32 = 32.0;
+const PALETTE_MARKER_WIDTH: f32 = 12.0;
 /// The most width a list entry's detail takes from its title.
 const DETAIL_MAX_WIDTH: f32 = 240.0;
 /// The most width the repository's name and its branch each take from the bar.
@@ -51,6 +52,8 @@ pub fn view(s: &State, cx: &mut Cx<State>) -> El {
     delete_dialog(s, &k, &mut overlays);
     action_dialog(s, &k, &mut overlays);
     new_branch_dialog(s, &k, &mut overlays);
+    commit_dialog(s, &k, &mut overlays);
+    stash_dialog(s, &k, &mut overlays);
     failure_dialog(s, &k, &mut overlays);
     palette_dialog(s, &k, &mut overlays);
     let sheets = col().w_full().grow(1.0).min_h(0.0).px(SHEET_GAP).pb(SHEET_GAP).gap(SHEET_GAP).child(panel(s, &k)).child(main(s, &k));
@@ -106,35 +109,27 @@ fn progress(k: &Kit, action: &str) -> El {
     row().gap(8.0).items_center().child(Spinner::new().size(14.0).build(k)).child(text(format!("{action}…")).font(k.ty.ui).color(k.c.text_muted))
 }
 
-/// The list to pick from, or the commit message when the kind has no list, beside the files of
-/// the review.
+/// The list to pick from, or what is staged when the kind has no list, beside the files of the
+/// review.
 fn panel(s: &State, k: &Kit) -> El {
     let panel = sheet(k, row().key("panel").w_full().h(PANEL_HEIGHT));
-    panel.child(if s.kind.has_list() { entries(s, k) } else { commit_box(s, k) }).child(files(s, k))
+    panel.child(if s.kind.has_list() { entries(s, k) } else { staged(s, k) }).child(files(s, k))
 }
 
-fn commit_box(s: &State, k: &Kit) -> El {
-    let field = TextArea::new(&s.commit_text)
-        .width(None)
-        .rows(COMMIT_ROWS)
-        .placeholder("Commit message")
-        .label("Commit message")
-        .on_edit(|s: &mut State| &mut s.commit_text)
-        .on_key(|s: &mut State, event: &KeyEvent, _: &mut Tx| multi_line_key(s, event, |s| &mut s.commit_text, State::commit));
-    let label = match s.overview.staged_files() {
-        0 => "Commit".to_owned(),
-        1 => "Commit 1 file".to_owned(),
-        staged => format!("Commit {staged} files"),
-    };
-    let hint = if s.overview.staged_files() == 0 { "Stage files to commit them" } else { "Ctrl+Enter commits" };
-    let buttons = row()
-        .w_full()
-        .gap(8.0)
-        .items_center()
-        .child(Button::new(label).disabled(!s.can_commit()).on_press(State::commit).build(k))
-        .child(Button::new("Stash").variant(ButtonVariant::Ghost).disabled(!s.can_stash()).help("Put all changes aside, new files too").on_press(|s: &mut State| s.run(Action::Stash)).build(k))
-        .child(one_line(hint.to_owned()).font(k.ty.text_small).color(k.c.text_faint));
-    col().key("commit").grow(1.0).min_w(0.0).h_full().padding(8.0).gap(8.0).child(field.build(k)).child(buttons)
+/// What a commit would take, and the way to unstage it.
+fn staged(s: &State, k: &Kit) -> El {
+    let column = col().key("staged-column").grow(1.0).min_w(0.0).h_full().padding(8.0).gap(4.0);
+    let header = list_header(k, format!("Staged ({})", s.overview.staged_files()))
+        .child(small_button("Commit").disabled(!s.can_start_commit()).on_press(State::start_commit).build(k));
+    if s.staged.is_empty() {
+        return column.child(header).child(muted(k, "Nothing staged"));
+    }
+    let (kit, idle) = (k.clone(), s.running.is_none());
+    let tree = file_tree(|s| &s.staged, |s| &mut s.staged, move |node, item| {
+        item.trailing(row_action(&kit, "Unstage", idle, &node.path, |s, path| s.run(Action::Unstage(s.unstageable_in(path)))))
+    });
+    let tree = tree.name("Staged files").on_select(|s: &mut State, path, tx| s.scroll_to_staged(path, tx));
+    column.child(header).child(tree.build(s, k).grow(1.0).min_h(0.0))
 }
 
 fn entries(s: &State, k: &Kit) -> El {
@@ -195,27 +190,51 @@ fn list_header(k: &Kit, summary: String) -> El {
     row().w_full().gap(4.0).px(8.0).h(24.0).items_center().child(one_line(summary).font(k.ty.ui).color(k.c.text_muted)).child(row().grow(1.0))
 }
 
+/// The files of the review, but for those wholly staged when it is of the worktree.
 fn files(s: &State, k: &Kit) -> El {
-    let statuses = if s.reviews_worktree() { s.overview.files.clone() } else { HashMap::new() };
-    let tree = Tree::new(|s: &State| &s.files, |s: &mut State| &mut s.files, FileNode::label)
-        .name("Changed files")
-        .row(move |node, row| {
-            let item = TreeItem::file(node, row);
-            let item = match node.data {
-                Some((added, removed)) => item.changes(added, removed),
-                None => item,
-            };
-            match statuses.get(&node.path) {
-                Some(FileStatus { staged: true, unstaged: true }) => item.badge("partly staged"),
-                Some(FileStatus { staged: true, unstaged: false }) => item.badge("staged"),
-                _ => item,
-            }
-        })
-        .on_select(|s: &mut State, path, tx| s.scroll_to_path(path, tx))
-        .build(s, k)
-        .grow(1.0)
-        .min_h(0.0);
-    col().key("files-column").grow(1.0).min_w(0.0).h_full().padding(8.0).child(tree)
+    let column = col().key("files-column").grow(1.0).min_w(0.0).h_full().padding(8.0).gap(4.0);
+    let (kit, worktree, idle) = (k.clone(), !s.kind.has_list(), s.running.is_none());
+    let tree = file_tree(|s| &s.files, |s| &mut s.files, move |node, item| {
+        if !worktree {
+            return item;
+        }
+        item.trailing(row_action(&kit, "Stage", idle, &node.path, |s, path| s.run(Action::Stage(s.stageable_in(path)))))
+    });
+    let tree = tree.name("Changed files").on_select(|s: &mut State, path, tx| s.scroll_to_path(path, tx));
+    let tree = tree.build(s, k).grow(1.0).min_h(0.0);
+    if s.kind.has_list() {
+        return column.child(tree);
+    }
+    let header = list_header(k, format!("Unstaged ({})", s.listed_files().count()))
+        .child(small_button("Stash").disabled(!s.can_stash()).help("Put changes aside").on_press(State::start_stash).build(k));
+    column.child(header).child(if s.files.is_empty() { muted(k, "Nothing unstaged") } else { tree })
+}
+
+/// A tree of files with their changed lines, `decorate` adding to each row.
+fn file_tree(
+    get: fn(&State) -> &TreeModel<FileNode<LineCounts>>,
+    get_mut: fn(&mut State) -> &mut TreeModel<FileNode<LineCounts>>,
+    decorate: impl Fn(&FileNode<LineCounts>, TreeItem) -> TreeItem + 'static,
+) -> Tree<State, FileNode<LineCounts>> {
+    Tree::new(get, get_mut, FileNode::label).row(move |node, row| {
+        let item = TreeItem::file(node, row);
+        let item = match node.data {
+            Some((added, removed)) => item.changes(added, removed),
+            None => item,
+        };
+        decorate(node, item)
+    })
+}
+
+/// A button on the file list's row for `path`, a file or a folder, doing `act` to it.
+fn row_action(k: &Kit, label: &str, idle: bool, path: &str, act: fn(&mut State, &str)) -> El {
+    let path = path.to_owned();
+    let button = Button::new(label).variant(ButtonVariant::GhostMuted).control_size(ControlSize::Small).disabled(!idle);
+    button.on_press(move |s: &mut State| act(s, &path)).build(k)
+}
+
+fn muted(k: &Kit, line: &str) -> El {
+    text(line.to_owned()).font(k.ty.ui).color(k.c.text_muted).px(8.0)
 }
 
 fn main(s: &State, k: &Kit) -> El {
@@ -456,6 +475,78 @@ fn new_branch_dialog(s: &State, k: &Kit, overlays: &mut Vec<El>) {
         .build(k, overlays);
 }
 
+/// The message for what is staged. Closing keeps it, and so does a commit that failed.
+fn commit_dialog(s: &State, k: &Kit, overlays: &mut Vec<El>) {
+    if !s.committing {
+        return;
+    }
+    let field = TextArea::new(&s.commit_text)
+        .width(None)
+        .rows(COMMIT_ROWS)
+        .placeholder("Commit message")
+        .label("Commit message")
+        .on_edit(|s: &mut State| &mut s.commit_text)
+        .on_key(|s: &mut State, event: &KeyEvent, _: &mut Tx| multi_line_key(s, event, |s| &mut s.commit_text, State::commit));
+    let label = match s.overview.staged_files() {
+        1 => "Commit 1 file".to_owned(),
+        staged => format!("Commit {staged} files"),
+    };
+    let buttons = row()
+        .w_full()
+        .padding(16.0)
+        .gap(8.0)
+        .items_center()
+        .child(one_line("Ctrl+Enter commits".to_owned()).font(k.ty.text_small).color(k.c.text_faint))
+        .child(row().grow(1.0))
+        .child(Button::new("Cancel").variant(ButtonVariant::Ghost).on_press(State::cancel_commit).build(k))
+        .child(Button::new(label).disabled(!s.can_commit()).on_press(State::commit).build(k));
+    let on = text(format!("On {}", s.overview.head)).font(k.ty.ui).color(k.c.text_muted).wrap_anywhere();
+    Dialog::new("commit", "Commit")
+        .width(COMMIT_WIDTH)
+        .fit()
+        .open(true)
+        .on_close(State::cancel_commit)
+        .child(col().w_full().px(16.0).gap(8.0).child(on).child(field.build(k)))
+        .child(buttons)
+        .build(k, overlays);
+}
+
+/// What a stash takes and what it is called.
+fn stash_dialog(s: &State, k: &Kit, overlays: &mut Vec<El>) {
+    let Some(takes) = s.stashing else { return };
+    let field = TextInput::new(&s.stash_text)
+        .width(None)
+        .placeholder("Name, if you want one")
+        .label("Stash name")
+        .on_edit(|s: &mut State| &mut s.stash_text)
+        .on_submit(|s: &mut State, _: &mut Tx| s.stash())
+        .on_key(|s: &mut State, event: &KeyEvent, _: &mut Tx| edit_by_word(&mut s.stash_text, event));
+    let nothing_staged = s.overview.staged_files() == 0;
+    let choices = [
+        (Stashed::WithNewFiles, "Changes and new files", false),
+        (Stashed::Tracked, "Changes, leaving new files", false),
+        (Stashed::Staged, "Only what's staged", nothing_staged),
+    ];
+    let group = choices.into_iter().fold(RadioGroup::new().label("Takes"), |group, (choice, label, disabled)| {
+        group.item(RadioItem::new(label, takes == choice).disabled(disabled).on_select(move |s: &mut State| s.stashing = Some(choice)))
+    });
+    let buttons = row()
+        .w_full()
+        .padding(16.0)
+        .gap(8.0)
+        .justify_end()
+        .child(Button::new("Cancel").variant(ButtonVariant::Ghost).on_press(State::cancel_stash).build(k))
+        .child(Button::new("Stash").disabled(!s.stash_ready()).on_press(State::stash).build(k));
+    Dialog::new("stash", "Stash")
+        .width(CONFIRM_WIDTH)
+        .fit()
+        .open(true)
+        .on_close(State::cancel_stash)
+        .child(col().w_full().px(16.0).gap(16.0).child(field.build(k)).child(group.build(k)))
+        .child(buttons)
+        .build(k, overlays);
+}
+
 /// What git said when an action failed.
 fn failure_dialog(s: &State, k: &Kit, overlays: &mut Vec<El>) {
     let Some(failure) = &s.action_failure else { return };
@@ -485,19 +576,38 @@ fn palette_dialog(s: &State, k: &Kit, overlays: &mut Vec<El>) {
             }
             _ => edit_by_word(&mut s.palette_text, event),
         });
-    let commands = s.palette_commands().into_iter().enumerate().fold(List::new().active(Some(active)).empty_message("Nothing matches"), |list, (row, command)| {
-        let title = match command.shortcut {
-            Some(shortcut) => format!("{}   {shortcut}", command.title()),
-            None => command.title(),
-        };
-        list.item(ListItem::new(title).on_select(move |s: &mut State, tx: &mut Tx| s.run_command(row, tx)))
-    });
-    Dialog::new("palette", "Commands").width(PALETTE_WIDTH).fit().open(true).on_close(State::close_palette).child(col().w_full().px(16.0).pb(16.0).gap(12.0).child(field.build(k)).child(commands.build(k))).build(k, overlays);
+    let commands = s.palette_commands();
+    let rows = commands.iter().enumerate().map(|(index, command)| palette_row(k, command, index == active, index));
+    let list = col().key("commands").role("listbox").w_full().gap(2.0).children(rows);
+    let list = if commands.is_empty() { list.child(muted(k, "Nothing matches").py(8.0)) } else { list };
+    Dialog::new("palette", "Commands").width(PALETTE_WIDTH).fit().open(true).on_close(State::close_palette).child(col().w_full().px(16.0).pb(16.0).gap(12.0).child(field.build(k)).child(list)).build(k, overlays);
     // Dialog pushes the layer centring its panel last. Pinned to the top instead, the palette
     // holds still as its list shrinks.
     if let Some(layer) = overlays.pop() {
         overlays.push(layer.items_start());
     }
+}
+
+/// A command in the palette, its key at the end. The highlighted one is marked, as Enter runs it.
+fn palette_row(k: &Kit, command: &Command, active: bool, index: usize) -> El {
+    let marker = row().w(PALETTE_MARKER_WIDTH).children(active.then(|| text("›").font(k.ty.ui_medium).color(k.c.text_faint)));
+    let item = row()
+        .key(format!("command{index}"))
+        .role("option")
+        .label(command.title())
+        .w_full()
+        .h(PALETTE_ROW_HEIGHT)
+        .px(8.0)
+        .gap(4.0)
+        .items_center()
+        .radius(k.radius.md)
+        .child(marker)
+        .child(one_line(command.title()).font(k.ty.ui_medium).color(k.c.text_base))
+        .child(row().grow(1.0))
+        .children(command.shortcut.map(|key| text(key).font(k.ty.mono).color(k.c.text_faint)))
+        .on_press_tx(move |s: &mut State, tx: &mut Tx| s.run_command(index, tx));
+    // Highlighted as the file lists mark their selection.
+    if active { item.fill(TreeStyle::from_kit(k).selected) } else { item.hover(k.c.hover) }
 }
 
 #[cfg(test)]

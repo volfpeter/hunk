@@ -1,6 +1,7 @@
 //! What can be done to a repository.
 
 use crate::git::{GitError, Repo, Result};
+use crate::review::stash_commit;
 
 /// A change to the repository. Stashes go by hash, since `stash@{n}` shifts.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -17,12 +18,24 @@ pub enum Action {
     Commit(String),
     Checkout(String),
     CreateBranch(String),
-    Stash,
+    /// Puts changes aside, named `name` unless it is empty.
+    Stash { name: String, takes: Stashed },
     ApplyStash(String),
     PopStash(String),
     DropStash(String),
     Pull,
     Push,
+}
+
+/// What a stash takes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Stashed {
+    /// Changes to tracked files, staged or not.
+    Tracked,
+    /// Changes to tracked files and new files.
+    WithNewFiles,
+    /// Only what is staged.
+    Staged,
 }
 
 impl Action {
@@ -37,7 +50,7 @@ impl Action {
             Action::Commit(_) => "Commit",
             Action::Checkout(_) => "Check out",
             Action::CreateBranch(_) => "New branch",
-            Action::Stash => "Stash",
+            Action::Stash { .. } => "Stash",
             Action::ApplyStash(_) => "Apply",
             Action::PopStash(_) => "Pop",
             Action::DropStash(_) => "Drop",
@@ -57,8 +70,8 @@ impl Action {
             Action::Commit(message) => repo.run(&["commit", "-m", message]).map(drop),
             Action::Checkout(branch) => repo.run(&["switch", branch]).map(drop),
             Action::CreateBranch(name) => repo.run(&["switch", "-c", name]).map(drop),
-            Action::Stash => repo.run(&["stash", "push", "--include-untracked"]).map(drop),
-            Action::ApplyStash(stash) => repo.run(&["stash", "apply", stash]).map(drop),
+            Action::Stash { name, takes } => stash(repo, name, *takes),
+            Action::ApplyStash(stash) => repo.run(&["stash", "apply", &stash_commit(repo, stash)?]).map(drop),
             Action::PopStash(stash) => repo.run(&["stash", "pop", &stash_ref(repo, stash)?]).map(drop),
             Action::DropStash(stash) => repo.run(&["stash", "drop", &stash_ref(repo, stash)?]).map(drop),
             Action::Pull => repo.run(&["pull"]).map(drop),
@@ -86,10 +99,24 @@ fn discard_unstaged(repo: &Repo, paths: &[String]) -> Result<()> {
 
 /// Where the stash with the hash `stash` sits right now: `pop` and `drop` take nothing else.
 fn stash_ref(repo: &Repo, stash: &str) -> Result<String> {
-    let commit = repo.commit(stash)?;
+    let commit = stash_commit(repo, stash)?;
     let list = repo.run(&["stash", "list", "-z", "--format=%H"])?;
-    let index = list.split_terminator('\0').position(|hash| Some(hash) == commit.as_deref());
+    let index = list.split_terminator('\0').position(|hash| hash == commit);
     index.map(|index| format!("stash@{{{index}}}")).ok_or_else(|| GitError::new(format!("Stash {stash} is gone.")))
+}
+
+/// `--staged` needs git 2.35.
+fn stash(repo: &Repo, name: &str, takes: Stashed) -> Result<()> {
+    let mut args = vec!["stash", "push"];
+    args.extend(match takes {
+        Stashed::Tracked => None,
+        Stashed::WithNewFiles => Some("--include-untracked"),
+        Stashed::Staged => Some("--staged"),
+    });
+    if !name.is_empty() {
+        args.extend(["-m", name]);
+    }
+    repo.run(&args).map(drop)
 }
 
 /// A branch that has never been pushed goes to `origin`, and tracks it from then on.
@@ -259,11 +286,38 @@ mod tests {
         assert_eq!(head(), "main");
     }
 
+    fn stash(fixture: &Fixture, takes: Stashed) {
+        Action::Stash { name: String::new(), takes }.run(&fixture.repo).unwrap();
+    }
+
     #[test]
-    fn stashes_untracked_files_too() {
+    fn stashes_tracked_changes_with_or_without_new_files() {
         let fixture = with_changes();
-        Action::Stash.run(&fixture.repo).unwrap();
+        stash(&fixture, Stashed::Tracked);
+        assert_eq!(status(&fixture), "?? new.txt\n");
+
+        fixture.write("a.txt", "two\n");
+        stash(&fixture, Stashed::WithNewFiles);
         assert_eq!(status(&fixture), "");
+    }
+
+    #[test]
+    fn stashes_only_what_is_staged() {
+        let fixture = with_changes();
+        fixture.commit("b.txt", "one\n", "second");
+        fixture.write("b.txt", "two\n");
+        fixture.git(&["add", "b.txt"]);
+
+        stash(&fixture, Stashed::Staged);
+
+        assert_eq!(status(&fixture), " M a.txt\n?? new.txt\n");
+    }
+
+    #[test]
+    fn a_named_stash_keeps_its_name() {
+        let fixture = with_changes();
+        Action::Stash { name: "parked idea".into(), takes: Stashed::Tracked }.run(&fixture.repo).unwrap();
+        assert!(fixture.git(&["stash", "list", "--format=%s"]).contains("parked idea"));
     }
 
     /// Two stashes and the hash of each, the newest last.
@@ -292,6 +346,16 @@ mod tests {
         assert_eq!(fixture.read("a.txt").as_deref(), Some("older\n"));
         assert_eq!(fixture.git(&["rev-parse", "--short", "stash@{0}"]).trim(), newer);
         assert_eq!(fixture.git(&["stash", "list"]).lines().count(), 1);
+    }
+
+    #[test]
+    fn applies_a_stash_whose_short_hash_is_only_digits() {
+        let (fixture, _, _) = with_two_stashes();
+        let stash = fixture.stash_with_digits_only_hash();
+
+        Action::ApplyStash(stash).run(&fixture.repo).unwrap();
+
+        assert_eq!(fixture.read("a.txt").as_deref(), Some("newer\n"));
     }
 
     #[test]

@@ -26,6 +26,9 @@ pub struct FileStatus {
     pub unstaged: bool,
 }
 
+/// Lines a change adds and removes.
+pub type LineCounts = (u32, u32);
+
 /// How far the current branch and the branch it tracks have moved apart.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Upstream {
@@ -45,6 +48,8 @@ pub struct Overview {
     pub stashes: Vec<Entry>,
     /// Every file with something uncommitted about it, by path.
     pub files: HashMap<String, FileStatus>,
+    /// The lines each staged file changes, by path.
+    pub staged_lines: HashMap<String, LineCounts>,
     /// `None` when the current branch tracks nothing.
     pub upstream: Option<Upstream>,
 }
@@ -59,6 +64,7 @@ impl Overview {
             branches,
             stashes: stashes(repo)?,
             files: file_statuses(repo)?,
+            staged_lines: staged_lines(repo)?,
             upstream: upstream(repo)?,
         })
     }
@@ -135,6 +141,19 @@ fn file_statuses(repo: &Repo) -> Result<HashMap<String, FileStatus>> {
         .collect())
 }
 
+/// Binary files count no lines.
+fn staged_lines(repo: &Repo) -> Result<HashMap<String, LineCounts>> {
+    let stat = repo.run(&["diff", "--cached", "--no-ext-diff", "--numstat", "-z", "--no-renames"])?;
+    Ok(stat
+        .split_terminator('\0')
+        .filter_map(|record| {
+            let mut fields = record.splitn(3, '\t');
+            let (added, removed, path) = (fields.next()?, fields.next()?, fields.next()?);
+            Some((path.to_owned(), (added.parse().unwrap_or(0), removed.parse().unwrap_or(0))))
+        })
+        .collect())
+}
+
 fn upstream(repo: &Repo) -> Result<Option<Upstream>> {
     if repo.head_commit()?.is_none() || repo.commit("@{upstream}")?.is_none() {
         return Ok(None);
@@ -188,6 +207,23 @@ mod tests {
         assert_eq!(status("old.txt"), Some((true, false)));
         assert_eq!(status("moved.txt"), Some((true, false)));
         assert_eq!(status("untracked.txt"), Some((false, true)));
+    }
+
+    #[test]
+    fn counts_the_lines_each_staged_file_changes_even_before_the_first_commit() {
+        let fixture = Fixture::new();
+        fixture.write("a.txt", "one\ntwo\n");
+        fixture.git(&["add", "a.txt"]);
+        assert_eq!(Overview::load(&fixture.repo).unwrap().staged_lines, HashMap::from([("a.txt".to_owned(), (2, 0))]));
+
+        fixture.git(&["commit", "-q", "-m", "first"]);
+        fixture.write("a.txt", "one\n");
+        fixture.git(&["add", "a.txt"]);
+        fixture.write("b.bin", "\0binary");
+        fixture.git(&["add", "b.bin"]);
+        fixture.write("a.txt", "unstaged\n");
+        let lines = Overview::load(&fixture.repo).unwrap().staged_lines;
+        assert_eq!(lines, HashMap::from([("a.txt".to_owned(), (0, 1)), ("b.bin".to_owned(), (0, 0))]));
     }
 
     #[test]

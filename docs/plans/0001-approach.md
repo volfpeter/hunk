@@ -1,6 +1,6 @@
 # 0001: Approach
 
-Status: step 4a done, waiting for Peter's UI review. See [Tasks](#tasks).
+Status: step 4b done, waiting for Peter's UI review. See [Tasks](#tasks).
 
 ## Intent
 
@@ -110,7 +110,7 @@ Tasks:
 
 The palette from step 3 lists what is possible right now. Extend it, but don't overdo it. A file in the diff collapses only from its chevron, which Rune builds: Peter accepts that, so no Rune issue.
 
-The palette's keys sit in the row's label, because Rune's `List` has no slot for them (see `docs/rune-quirks.md`). Commands carry a topic, shown as a prefix and ordered by it: `List`'s group headers repeated the prefix and cost too much height.
+The palette draws its own rows, since Rune's `List` has no slot for a key and its highlight is barely visible (see `docs/rune-quirks.md`). Commands carry a topic, shown as a prefix and ordered by it: `List`'s group headers repeated the prefix and cost too much height.
 
 Tasks:
 
@@ -132,11 +132,13 @@ Keep in mind:
 - A failed commit keeps its message today. The dialog must too, and a message shouldn't be lost by closing it.
 - Stash takes new files too today. The choices map to `git stash push`'s `--include-untracked` and `--staged` (git 2.35 and later), and the name to `-m`.
 
+Built: each tree's header holds its action, Commit over the staged tree and Stash over the unstaged one. Every row has Unstage or Stage, and a folder's acts on everything under it. The diff's order still comes from a tree of all its files, since the unstaged tree no longer holds them all in Changes. The staged tree marks nothing outside Changes, so it never looks like it moved the diff. Not handled: stashing tracked changes when only new files changed does nothing, silently, as git does.
+
 Tasks:
 
-- [ ] Show staged and unstaged files apart, in Changes and Staged vs unstaged
-- [ ] Commit from a dialog, replacing the message box and its buttons
-- [ ] Stash from a dialog: name the stash and pick what goes: tracked changes, those and new files, or only what's staged
+- [x] Show staged and unstaged files apart, in Changes and Staged vs unstaged
+- [x] Commit from a dialog, replacing the message box and its buttons
+- [x] Stash from a dialog: name the stash and pick what goes: tracked changes, those and new files, or only what's staged
 
 ### Step 4c: Open a repository
 
@@ -155,7 +157,41 @@ Tasks:
 - [ ] Start as Zed does: the folder passed, else the last repository, else an empty window
 - [ ] Name the repository `<user-or-org>/<project>`
 
-### Step 4d: UI refinements
+### Step 4d: Branches and remotes
+
+The remote side of everyday work, without a terminal: switching to a colleague's or an agent's branch, fetching, and wiring up a new repository's `origin`.
+
+Keep in mind:
+
+- **One branch switcher**, a dialog, from the branch name in the bar and from the palette. Local branches come first, newest first. After a separator come remote branches that have no local branch. Typing filters both. It creates branches too, as Zed's does: a name that no branch has offers to create it. The New branch dialog goes.
+- **A remote-only branch checks out as a local branch tracking it.** `git switch <name>` guesses this only when exactly one remote has the branch. Otherwise pass `--track <remote>/<name>`.
+- **Fetch gets every remote and prunes**, so the switcher stops offering branches that were deleted on the remote. It fails on credentials the way pull does.
+- **The remotes dialog** lists each remote with its URL. It adds a remote from a name and a URL, with the name defaulting to `origin` when there is none. It removes a remote only after a confirm, because git drops that remote's branches with it. Push already sends a new branch to `origin`.
+
+Tasks:
+
+- [ ] Switch or create a branch from one dialog: local branches, then those only on a remote
+- [ ] Check out a branch that only exists on a remote, tracking it
+- [ ] Fetch
+- [ ] Add and remove remotes from a dialog
+
+### Step 4e: Pull requests
+
+Match a branch to its pull request, and open one, on GitHub and on Forgejo or Gitea. Reviewing a pull request in the app comes later.
+
+Keep in mind:
+
+- **The forge comes from the remote's URL**, the same URL that step 4c parses for the repository's name. github.com means GitHub. Any other host is taken to be Forgejo or Gitea.
+- **Opening a pull request goes to the forge's own form, in the browser**: `<host>/<owner>/<repo>/compare/<base>...<branch>` on all three. It needs no auth, and templates, reviewers and labels work out of the box. An in-app dialog waits until it hurts.
+- **On GitHub, `gh` finds a branch's pull request**, with `--json` output and its own auth. That makes it a second spawned program, so it gets its own module, as git has.
+- **Forgejo and Gitea have no CLI with machine-readable output.** `fj` prints only for people and can't search by branch. Their HTTP API can (`/api/v1/repos/<owner>/<repo>/pulls`), but private repositories need a token. Decided: on Forgejo and Gitea the app only opens pull requests for now. Showing a branch's pull request there waits for an HTTP client and a token setting.
+
+Tasks:
+
+- [ ] Open a pull request for a branch, in the browser
+- [ ] Show a branch's pull request on GitHub, and open it in the browser
+
+### Step 4f: UI refinements
 
 Peter dislikes the always-visible top panel. A left sidebar is doubtful too, because side-by-side diffs need the width, so moving the panel to the side is unlikely to be the fix. lazygit's layout is not a reference.
 
@@ -169,6 +205,15 @@ Tasks:
 - [ ] Stop new files wasting half of the split view (may need a Rune issue)
 - [ ] Decide what picking the default branch should show (it's empty today)
 
+### Step 4g: Hotkeys
+
+Hotkeys go in once the layout settles, so they're assigned once. Give the frequent actions a key, then add an overlay that lists every key, grouped as the palette groups its commands. The palette already shows the keys the diff has.
+
+Tasks:
+
+- [ ] Assign keys to the frequent actions
+- [ ] Overlay listing every key
+
 ### Step 5: File explorer
 
 Lets a reviewer read code outside the diff, then get back without losing their place. Rune has no read-only code view, so that part is ours.
@@ -181,4 +226,22 @@ Tasks:
 
 ### Later
 
-Order open, plan each when it comes up: PR review on GitHub and Forgejo, worktrees, LSP (diffle's `lsp/` is the reference), commit graph, hunk and line staging, opening folds in the diff.
+Order open, plan each when it comes up: reviewing pull requests on GitHub and Forgejo/Gitea, worktrees (below), LSP (diffle's `lsp/` is the reference), commit graph, hunk and line staging, opening folds in the diff.
+
+### Later: Worktrees
+
+Not urgent. A feature of its own, with its own dialog: list the worktrees with their branch and path, open one, create one, delete one.
+
+Keep in mind:
+
+- **Opening a worktree is opening a repository**, so this builds on step 4c.
+- **Creating takes a path and a branch**, new or existing. A branch can be checked out in only one worktree at a time, and git says so.
+- **Deleting is destructive.** A worktree with changes or new files needs `--force`, and the confirm must say what gets lost. The main worktree and the one that is open can't be deleted.
+- **A worktree has its own git dir** (`.git/worktrees/<name>`), and review state lives there. Deleting a worktree takes its comments with it, so the confirm says that too.
+- **The watcher watches only the open worktree's git dir.** Branches and stashes live in the common dir (`git rev-parse --git-common-dir`). It is likely already blind to changes there when a worktree is open.
+
+Tasks:
+
+- [ ] List worktrees and open one
+- [ ] Create a worktree on a new or an existing branch
+- [ ] Delete a worktree, after a confirm

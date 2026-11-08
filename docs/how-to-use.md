@@ -53,19 +53,23 @@ Once a comment is dealt with, press **Resolve** on it. Resolved comments leave t
 
 ## Stage, commit and discard
 
-Each file in **Changes** and **Staged vs unstaged** has its buttons in its header:
+In **Changes** and **Staged vs unstaged**, the panel above the diff lists what is **Staged** on the left and what is **Unstaged** on the right. A partly staged file is in both. In **Changes**, a file in either list jumps to it in the diff. **Staged vs unstaged** leaves staged files out of the diff, so the staged list there is for seeing what a commit would take.
 
-- **Stage** and **Unstage** work on the whole file. The file list marks what is **staged** or **partly staged**.
+Each row has **Stage** or **Unstage**. On a folder, it acts on every file under it.
 
-To stage or unstage everything at once, use **Git: Stage all** and **Git: Unstage all** in the [command palette](#commands).
+Each file in the diff has its buttons in its header:
+
+- **Stage** and **Unstage** work on the whole file.
 - **Discard** drops what the review shows for that file, after asking. In **Changes** it goes back to the last commit, and in **Staged vs unstaged** back to what you staged. Either way a new file is deleted. This can't be undone.
 
-To commit, write a message in the box above the diff and press **Commit**, or **Ctrl+Enter**. **Enter** starts a new line. Your commit hooks run as usual, and if the commit fails the message stays.
+To stage or unstage everything at once, use **Git: Stage all** and **Git: Unstage all** in the [command palette](#commands).
+
+To commit, press **Commit** above the staged list, write a message and press the dialog's **Commit**, or **Ctrl+Enter**. **Enter** starts a new line. Your commit hooks run as usual. Closing the dialog keeps the message, and so does a commit that fails.
 
 ## Branches and stashes
 
 - **Branches:** select a branch and press **Check out**, or press **New branch** to start one from where you are.
-- **Stash**, beside **Commit**, puts all your changes aside, new files too.
+- **Stash**, above the unstaged list, puts changes aside. Give the stash a name if you like, and pick what it takes: your changes and new files, your changes alone, or only what's staged.
 - **Stashes:** select one and press **Apply** to bring it back and keep it, **Pop** to bring it back and remove it, or **Drop** to delete it, which asks first.
 
 ## Pull and push
@@ -76,6 +80,6 @@ They use your own Git setup, but can't answer prompts: if Git needs a password i
 
 ## Commands
 
-**Ctrl+K** or **Ctrl+Shift+P** opens a list of everything you can do right now. Each command starts with its topic, such as **Git:** or **Review:**. Type to filter, by topic too, use the arrow keys to pick and **Enter** to run. Actions on a file act on the one at the top of the diff, and those on a branch or stash on the one selected in the list.
+**Ctrl+K** or **Ctrl+Shift+P** opens a list of everything you can do right now. Each command starts with its topic, such as **Git:** or **Review:**. Type to filter, by topic too, use the arrow keys to pick and **Enter** to run the command marked with **›**. Actions on a file act on the one at the top of the diff, and those on a branch or stash on the one selected in the list.
 
 The list also moves through the diff and switches to another review. Moving shows its key, to use without the list: **]** and **[** go to the next and previous file, **j** and **k** to the next and previous change.

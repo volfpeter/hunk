@@ -3,7 +3,7 @@
 use rune_kit::diff::Side;
 use serde::{Deserialize, Serialize};
 
-use crate::git::{Repo, Result};
+use crate::git::{GitError, Repo, Result};
 
 /// A comparison, as a patch of what changed between its two points.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -81,9 +81,15 @@ impl Review {
             Review::Unstaged => Ok(diff(repo, &[])? + &untracked_patch(repo)?),
             Review::Commit(commit) => repo.run(&["show", "--no-ext-diff", "--format=", "--diff-merges=first-parent", commit]),
             Review::Branch { base, branch } => diff(repo, &[&format!("{base}...{branch}")]),
-            Review::Stash(stash) => repo.run(&["stash", "show", "--no-ext-diff", "--patch", "--include-untracked", stash]),
+            Review::Stash(stash) => repo.run(&["stash", "show", "--no-ext-diff", "--patch", "--include-untracked", &stash_commit(repo, stash)?]),
         }
     }
+}
+
+/// The full hash of the stash `stash`, for git's stash commands: they take an argument of only
+/// digits, as a short hash can be, for a place in the stash list.
+pub fn stash_commit(repo: &Repo, stash: &str) -> Result<String> {
+    repo.commit(stash)?.ok_or_else(|| GitError::new(format!("Stash {stash} is gone.")))
 }
 
 fn diff(repo: &Repo, revisions: &[&str]) -> Result<String> {
@@ -211,6 +217,19 @@ mod tests {
         let stash = fixture.git(&["rev-parse", "--short", "stash@{0}"]);
         let patch = Review::Stash(stash.trim().to_owned()).patch(&fixture.repo).unwrap();
         assert_eq!(paths(&patch), ["a.txt", "new.txt"]);
+    }
+
+    #[test]
+    fn a_stash_whose_short_hash_is_only_digits_shows_itself() {
+        let fixture = Fixture::new();
+        fixture.commit("a.txt", "one\n", "first");
+        fixture.write("a.txt", "two\n");
+        fixture.git(&["stash", "push", "-q"]);
+        let stash = fixture.stash_with_digits_only_hash();
+
+        let patch = Review::Stash(stash).patch(&fixture.repo).unwrap();
+
+        assert!(patch.contains("+two"), "{patch}");
     }
 
     #[test]

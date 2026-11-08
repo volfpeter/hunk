@@ -47,16 +47,20 @@ Everything the app does, to try at your own pace. A tick means Peter tried it an
 - [ ] Stage a file
 - [ ] Unstage a file
 - [ ] Stage and unstage everything, from the palette
-- [ ] File list marks staged and partly staged files
-- [ ] Commit, with a multi-line message
-- [ ] A failed commit keeps its message
+- [ ] Changes and Staged vs unstaged list staged files on the left and unstaged on the right, a partly staged file in both
+- [ ] The staged list shows the lines each file changes
+- [ ] Stage or unstage a file, or a whole folder, from its row in the lists
+- [ ] In Changes, a file in either list jumps to it in the diff
+- [ ] Commit from a dialog, with a multi-line message
+- [ ] A failed or closed commit dialog keeps its message
 - [ ] Discard in Changes goes back to the last commit
 - [ ] Discard in Staged vs unstaged goes back to what you staged
 - [ ] Discarding a new file deletes it
 - [ ] Discard and Drop ask first
 - [ ] Check out a branch
 - [ ] Create a branch
-- [ ] Stash everything, new files too
+- [ ] Stash from a dialog: changes and new files, changes alone, or only what's staged
+- [ ] Name a stash
 - [ ] Apply, pop and drop a stash
 - [ ] Pull (only tried against a local repository so far)
 - [ ] Push, publishing a new branch to `origin` (only tried against a local repository so far)
@@ -71,4 +75,5 @@ Everything the app does, to try at your own pace. A tick means Peter tried it an
 - [ ] File commands act on the file at the top of the diff
 - [ ] Ctrl+Shift+P opens the palette too
 - [ ] Next and previous file and hunk from the palette, showing their keys
+- [ ] The palette's highlighted command stands out, marked with ›
 - [ ] Switch to any other review from the palette

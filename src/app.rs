@@ -6,10 +6,10 @@ use rune::{KeyEvent, Latest, TextEdit, Tx, Waker};
 use rune_kit::diff::{Annotation, DiffMode, DiffState, FileDiff, LineRange, parse};
 use rune_kit::{FileNode, FileTree, TreeModel};
 
-use crate::action::Action;
+use crate::action::{Action, Stashed};
 use crate::comments::{Anchor, Comment, Comments, prompt};
 use crate::git::{Repo, Result};
-use crate::overview::{Entry, FileStatus, Overview};
+use crate::overview::{Entry, FileStatus, LineCounts, Overview};
 use crate::review::{Loaded, Review};
 use crate::watch::RepoWatch;
 
@@ -57,9 +57,6 @@ impl Kind {
         matches!(self, Kind::Commits | Kind::Branches | Kind::Stashes | Kind::Comments)
     }
 }
-
-/// Changed lines of a file: added, removed.
-pub type LineCounts = (u32, u32);
 
 /// What the diff on screen shows.
 struct Shown {
@@ -109,8 +106,11 @@ pub struct State {
     pub overview: Overview,
     /// The commits, branches or stashes on offer.
     pub list: TreeModel<Entry>,
-    /// The files the shown review changes.
+    /// The files the shown review changes, but for those wholly staged in a review of the
+    /// worktree.
     pub files: TreeModel<FileNode<LineCounts>>,
+    /// The staged files, in a review of the worktree.
+    pub staged: TreeModel<FileNode<LineCounts>>,
     pub diff: DiffState,
     pub error: Option<String>,
     pub comments: Comments,
@@ -122,7 +122,12 @@ pub struct State {
     pub edit_text: TextEdit,
     /// The comment waiting for its deletion to be confirmed.
     pub deleting: Option<u64>,
+    /// Whether the commit dialog is open.
+    pub committing: bool,
     pub commit_text: TextEdit,
+    /// What the stash being set up takes, while its dialog is open.
+    pub stashing: Option<Stashed>,
+    pub stash_text: TextEdit,
     pub branch_text: TextEdit,
     /// Whether the new branch dialog is open.
     pub naming_branch: bool,
@@ -156,6 +161,7 @@ impl State {
             overview: Overview::default(),
             list: TreeModel::new().key("list"),
             files: TreeModel::new().key("files"),
+            staged: TreeModel::new().key("staged"),
             diff,
             error: None,
             comments,
@@ -164,7 +170,10 @@ impl State {
             editing: None,
             edit_text: TextEdit::default(),
             deleting: None,
+            committing: false,
             commit_text: TextEdit::default(),
+            stashing: None,
+            stash_text: TextEdit::default(),
             branch_text: TextEdit::default(),
             naming_branch: false,
             confirming: None,
@@ -262,6 +271,7 @@ impl State {
             None => {
                 self.patch_load.cancel();
                 self.shown = None;
+                self.files.clear();
                 self.show_files(Vec::new());
             }
         }
@@ -436,6 +446,17 @@ impl State {
         self.paths_where(file, |_| true)
     }
 
+    /// The paths at or under `path` in the file list that can be staged.
+    pub fn stageable_in(&self, path: &str) -> Vec<String> {
+        let files: Vec<usize> = self.files.subtree(path).filter(|node| !node.dir).filter_map(|node| self.diff.file_index(&node.path)).collect();
+        files.into_iter().flat_map(|file| self.stageable(file)).collect()
+    }
+
+    /// The paths at or under `path` in the staged list.
+    pub fn unstageable_in(&self, path: &str) -> Vec<String> {
+        self.staged.subtree(path).filter(|node| !node.dir).map(|node| node.path.clone()).collect()
+    }
+
     pub fn stage_file(&mut self, file: usize) {
         self.run(Action::Stage(self.stageable(file)));
     }
@@ -469,27 +490,59 @@ impl State {
         self.confirming = None;
     }
 
+    /// Whether there is something staged to commit.
+    pub fn can_start_commit(&self) -> bool {
+        self.running.is_none() && self.overview.staged_files() > 0
+    }
+
     pub fn can_commit(&self) -> bool {
-        self.running.is_none() && self.overview.staged_files() > 0 && !self.commit_text.text.trim().is_empty()
+        self.can_start_commit() && !self.commit_text.text.trim().is_empty()
+    }
+
+    /// Opens the commit dialog, with any message written before.
+    pub fn start_commit(&mut self) {
+        self.committing = true;
+        self.focus(|s| &mut s.commit_text);
+    }
+
+    /// Closes the commit dialog, keeping the message.
+    pub fn cancel_commit(&mut self) {
+        self.committing = false;
     }
 
     /// Commits what is staged. The message stays until that worked.
     pub fn commit(&mut self) {
         if self.can_commit() {
+            self.committing = false;
             self.run(Action::Commit(self.commit_text.text.trim().to_owned()));
         }
     }
 
-    /// Takes the reader to the commit message.
-    pub fn write_commit_message(&mut self) {
-        if !matches!(self.kind, Kind::Changes | Kind::Unstaged) {
-            self.select_kind(Kind::Changes);
-        }
-        self.focus(|s| &mut s.commit_text);
-    }
-
+    /// Whether there is anything to stash.
     pub fn can_stash(&self) -> bool {
         self.running.is_none() && !self.overview.files.is_empty()
+    }
+
+    /// Opens the stash dialog, taking new files too unless told otherwise.
+    pub fn start_stash(&mut self) {
+        self.stash_text = TextEdit::default();
+        self.stashing = Some(Stashed::WithNewFiles);
+        self.focus(|s| &mut s.stash_text);
+    }
+
+    pub fn cancel_stash(&mut self) {
+        self.stashing = None;
+    }
+
+    /// Whether the stash being set up would take anything.
+    pub fn stash_ready(&self) -> bool {
+        self.stashing.is_some_and(|takes| self.can_stash() && (takes != Stashed::Staged || self.overview.staged_files() > 0))
+    }
+
+    pub fn stash(&mut self) {
+        let Some(takes) = self.stashing.filter(|_| self.stash_ready()) else { return };
+        self.stashing = None;
+        self.run(Action::Stash { name: self.stash_text.text.trim().to_owned(), takes });
     }
 
     /// The branch selected in the list, unless it is the current one.
@@ -585,11 +638,30 @@ impl State {
         }
     }
 
-    /// Marks the file at the top of the diff in the file list.
-    pub fn follow_visible_file(&mut self, file: usize) {
-        if let Some(diff) = self.diff.files().get(file) {
-            self.files.select(diff.path());
+    /// Jumps the diff to the staged file `path` when the diff shows what is staged, and
+    /// otherwise leaves nothing marked, as nothing is.
+    pub fn scroll_to_staged(&mut self, path: &str, tx: &mut Tx) {
+        if self.shows_staged() {
+            self.scroll_to_path(path, tx);
+        } else {
+            self.staged.clear_selection();
         }
+    }
+
+    /// Marks the file at the top of the diff in each file list that holds it.
+    pub fn follow_visible_file(&mut self, file: usize) {
+        let Some(path) = self.diff.files().get(file).map(|diff| diff.path().to_owned()) else { return };
+        mark(&mut self.files, &path);
+        if self.shows_staged() {
+            mark(&mut self.staged, &path);
+        }
+    }
+
+    /// The files of the shown review that the file list holds.
+    pub fn listed_files(&self) -> impl Iterator<Item = &FileDiff> {
+        let worktree = self.reviews_worktree();
+        let wholly_staged = |path: &str| self.overview.files.get(path).is_some_and(|status| status.staged && !status.unstaged);
+        self.diff.files().iter().filter(move |file| !(worktree && wholly_staged(file.path())))
     }
 
     fn finish_action(&mut self, action: &Action, result: Result<()>) {
@@ -638,8 +710,8 @@ impl State {
         let any = |test: fn(&FileStatus) -> bool| self.overview.files.values().any(test);
         offer(idle && any(|status| status.unstaged), Command::new("Git", "Stage all", |s, _| s.run(Action::StageAll)));
         offer(idle && any(|status| status.staged), Command::new("Git", "Unstage all", |s, _| s.run(Action::UnstageAll)));
-        offer(idle, Command::new("Git", "Commit", |s, _| s.write_commit_message()));
-        offer(self.can_stash(), Command::new("Git", "Stash", |s, _| s.run(Action::Stash)));
+        offer(self.can_start_commit(), Command::new("Git", "Commit", |s, _| s.start_commit()));
+        offer(self.can_stash(), Command::new("Git", "Stash", |s, _| s.start_stash()));
         if let Some(stash) = self.selected_stash() {
             offer(idle, Command::new("Git", format!("Apply stash {stash}"), |s, _| s.apply_selected_stash()));
             offer(idle, Command::new("Git", format!("Pop stash {stash}"), |s, _| s.pop_selected_stash()));
@@ -672,12 +744,17 @@ impl State {
     }
 
     fn dialog_open(&self) -> bool {
-        self.deleting.is_some() || self.confirming.is_some() || self.naming_branch || self.action_failure.is_some()
+        self.deleting.is_some() || self.confirming.is_some() || self.naming_branch || self.committing || self.stashing.is_some() || self.action_failure.is_some()
+    }
+
+    /// Whether the diff on screen holds every staged file.
+    fn shows_staged(&self) -> bool {
+        self.shown.as_ref().is_some_and(|shown| shown.review == Review::Changes)
     }
 
     /// Gives the keyboard to one text field, which takes it from every other.
     fn focus(&mut self, field: fn(&mut State) -> &mut TextEdit) {
-        for text in [&mut self.draft_text, &mut self.edit_text, &mut self.commit_text, &mut self.branch_text, &mut self.palette_text] {
+        for text in [&mut self.draft_text, &mut self.edit_text, &mut self.commit_text, &mut self.stash_text, &mut self.branch_text, &mut self.palette_text] {
             text.focused = false;
         }
         field(self).focused = true;
@@ -705,6 +782,7 @@ impl State {
                 self.overview = overview;
                 self.error = None;
                 self.rebuild_list();
+                self.build_file_lists();
                 self.load_review();
             }
             Err(error) => self.error = Some(error.to_string()),
@@ -715,13 +793,18 @@ impl State {
         match patch {
             Ok(Loaded { review, patch, commit }) => {
                 self.error = None;
-                let same_review = self.shown.as_ref().filter(|shown| shown.review == review);
-                match same_review.map(|shown| shown.patch == patch) {
-                    Some(true) => {}
-                    Some(false) => self.update_files(parse(&patch), tx),
-                    None => self.show_files(parse(&patch)),
-                }
+                let unchanged = self.shown.as_ref().filter(|shown| shown.review == review).map(|shown| shown.patch == patch);
+                let files = parse(&patch);
+                // The file lists go by the review on screen.
                 self.shown = Some(Shown { review, commit, patch });
+                match unchanged {
+                    Some(true) => {}
+                    Some(false) => self.update_files(files, tx),
+                    None => {
+                        self.files.clear();
+                        self.show_files(files);
+                    }
+                }
                 if let Some(anchor) = self.reveal.take().and_then(|id| self.comments.get(id)).map(|comment| comment.anchor.clone()) {
                     self.scroll_to_anchor(&anchor, tx);
                 }
@@ -775,18 +858,9 @@ impl State {
         let top_path = old.get(top).map(|file| file.path().to_owned());
         let collapsed: Vec<String> = old.iter().enumerate().filter(|(index, _)| self.diff.collapsed(*index)).map(|(_, file)| file.path().to_owned()).collect();
         let selection = self.diff.selection().and_then(|lines| Some((old.get(lines.file)?.path().to_owned(), lines)));
-        let marked = self.files.selected().next().map(str::to_owned);
-        let rows = (0..self.files.visible_len()).filter_map(|row| self.files.visible_id(row));
-        let closed: Vec<String> = rows.filter(|id| self.files.has_children(id) && !self.files.is_expanded(id)).map(str::to_owned).collect();
 
         self.show_files(files);
 
-        for folder in &closed {
-            self.files.set_expanded(folder, false);
-        }
-        if let Some(path) = marked {
-            self.files.select(&path);
-        }
         for path in &collapsed {
             if let Some(file) = self.diff.file_index(path) {
                 self.diff.set_collapsed(file, true);
@@ -803,14 +877,29 @@ impl State {
         }
     }
 
-    /// Shows `files` in the file list, and in the diff in the same order.
+    /// Shows `files` in the diff, in the order of a file list holding them all, and in the file
+    /// lists.
     fn show_files(&mut self, mut files: Vec<FileDiff>) {
-        let counts = |file: &FileDiff| (file.additions() as u32, file.deletions() as u32);
-        self.files = FileTree::new().key("files").compact_folders(true).build(files.iter().map(|file| (file.path().to_owned(), counts(file))));
-        self.files.expand_all();
-        files.sort_by_key(|file| self.files.visible_row(file.path()));
+        let mut order = file_tree("order", files.iter().map(|file| (file.path().to_owned(), (0, 0))));
+        order.expand_all();
+        files.sort_by_key(|file| order.visible_row(file.path()));
         self.diff.set_files(files);
+        self.build_file_lists();
         self.place_annotations();
+    }
+
+    /// Fills the file lists from the diff on screen and what is staged, keeping their closed
+    /// folders and selection.
+    fn build_file_lists(&mut self) {
+        let counts = |file: &FileDiff| (file.additions() as u32, file.deletions() as u32);
+        let files = file_tree("files", self.listed_files().map(|file| (file.path().to_owned(), counts(file))));
+        let staged = self.overview.files.iter().filter(|(_, status)| status.staged && self.reviews_worktree());
+        let staged = file_tree("staged", staged.map(|(path, _)| (path.clone(), self.overview.staged_lines.get(path).copied().unwrap_or_default())));
+        self.files = kept_open(&self.files, files);
+        self.staged = kept_open(&self.staged, staged);
+        if !self.shows_staged() {
+            self.staged.clear_selection();
+        }
     }
 
     /// Fills the list for the current kind, keeping the selection while it still exists and
@@ -836,6 +925,32 @@ impl State {
         if let Some(id) = selected {
             self.list.select(&id);
         }
+    }
+}
+
+fn file_tree(key: &str, files: impl Iterator<Item = (String, LineCounts)>) -> TreeModel<FileNode<LineCounts>> {
+    FileTree::new().key(key).compact_folders(true).build(files)
+}
+
+/// `new`, open but where `old` had folders closed, and with `old`'s selection where it can.
+fn kept_open<T>(old: &TreeModel<T>, mut new: TreeModel<T>) -> TreeModel<T> {
+    new.expand_all();
+    let rows = (0..old.visible_len()).filter_map(|row| old.visible_id(row));
+    for folder in rows.filter(|id| old.has_children(id) && !old.is_expanded(id)) {
+        new.set_expanded(folder, false);
+    }
+    if let Some(id) = old.selected().next() {
+        new.select(id);
+    }
+    new
+}
+
+/// Selects `id` alone, or nothing when `tree` doesn't hold it.
+fn mark<T>(tree: &mut TreeModel<T>, id: &str) {
+    if tree.contains(id) {
+        tree.select(id);
+    } else {
+        tree.clear_selection();
     }
 }
 
@@ -975,12 +1090,89 @@ mod tests {
         assert_eq!(state.confirming, Some(Action::DiscardUnstaged(paths)));
     }
 
+    /// The leaf ids of `tree`, in order.
+    fn listed(tree: &TreeModel<FileNode<LineCounts>>) -> Vec<&str> {
+        (0..tree.visible_len()).filter_map(|row| tree.visible_id(row)).filter(|id| !tree.has_children(id)).collect()
+    }
+
+    #[test]
+    fn worktree_reviews_list_staged_files_apart_and_partly_staged_ones_in_both() {
+        let (_fixture, mut state) = state();
+        state.overview.files = HashMap::from([("a.txt".to_owned(), status(true, false)), ("b.txt".to_owned(), status(true, true)), ("c.txt".to_owned(), status(false, true))]);
+        state.overview.staged_lines = HashMap::from([("a.txt".to_owned(), (1, 1))]);
+
+        land(&mut state, Review::Changes, THREE_FILES);
+        assert_eq!((listed(&state.staged), listed(&state.files)), (vec!["a.txt", "b.txt"], vec!["b.txt", "c.txt"]));
+        assert_eq!(state.staged.get("a.txt").and_then(|node| node.data), Some((1, 1)));
+
+        land(&mut state, Review::Commit("abc".into()), THREE_FILES);
+        assert_eq!((listed(&state.staged), listed(&state.files)), (vec![], vec!["a.txt", "b.txt", "c.txt"]));
+    }
+
+    #[test]
+    fn a_folder_in_a_file_list_stands_for_every_file_under_it() {
+        let (_fixture, mut state) = state();
+        let added = |path: &str| format!("diff --git a/{path} b/{path}\nnew file mode 100644\n--- /dev/null\n+++ b/{path}\n@@ -0,0 +1 @@\n+x\n");
+        let patch: String = ["src/a.txt", "src/deep/b.txt", "c.txt"].map(added).concat();
+        state.overview.files = HashMap::from([
+            ("src/a.txt".to_owned(), status(true, true)),
+            ("src/deep/b.txt".to_owned(), status(false, true)),
+            ("src/staged.txt".to_owned(), status(true, false)),
+            ("c.txt".to_owned(), status(false, true)),
+        ]);
+
+        land(&mut state, Review::Changes, &patch);
+
+        assert_eq!(state.stageable_in("src"), ["src/deep/b.txt", "src/a.txt"]);
+        assert_eq!(state.stageable_in("c.txt"), ["c.txt"]);
+        let mut staged = state.unstageable_in("src");
+        staged.sort();
+        assert_eq!(staged, ["src/a.txt", "src/staged.txt"]);
+    }
+
+    #[test]
+    fn only_a_diff_holding_what_is_staged_marks_it_as_it_scrolls() {
+        let (_fixture, mut state) = state();
+        state.overview.files = HashMap::from([("a.txt".to_owned(), status(true, false)), ("c.txt".to_owned(), status(true, true))]);
+
+        land(&mut state, Review::Changes, TWO_FILES);
+        state.follow_visible_file(0);
+        assert_eq!((state.staged.selected().next(), state.files.selected().next()), (Some("a.txt"), None));
+        state.follow_visible_file(1);
+        assert_eq!((state.staged.selected().next(), state.files.selected().next()), (Some("c.txt"), Some("c.txt")));
+
+        land(&mut state, Review::Unstaged, TWO_FILES);
+        assert_eq!(state.staged.selected().next(), None);
+        state.follow_visible_file(1);
+        assert_eq!(state.staged.selected().next(), None);
+    }
+
+    #[test]
+    fn a_stash_of_what_is_staged_needs_something_staged() {
+        let (_fixture, mut state) = state();
+        state.overview.files = HashMap::from([("a.txt".to_owned(), status(false, true))]);
+        state.start_stash();
+        assert!(state.stash_ready());
+
+        state.stashing = Some(Stashed::Staged);
+        assert!(!state.stash_ready());
+        state.stash();
+        assert_eq!((state.stashing, state.running), (Some(Stashed::Staged), None));
+    }
+
     #[test]
     fn a_failed_commit_keeps_its_message_and_a_good_one_clears_it() {
         let (_fixture, mut state) = state();
+        state.overview.files = HashMap::from([("a.txt".to_owned(), status(true, false))]);
+        state.start_commit();
         state.commit_text = TextEdit::new("Fix it".to_owned());
-        let action = Action::Commit("Fix it".into());
+        state.cancel_commit();
+        state.start_commit();
+        assert_eq!(state.commit_text.text, "Fix it");
 
+        state.commit();
+        assert_eq!((state.committing, state.running), (false, Some("Commit")));
+        let action = Action::Commit("Fix it".into());
         state.finish_action(&action, Err(crate::git::GitError::new("hook said no")));
         assert_eq!(state.commit_text.text, "Fix it");
         assert_eq!(state.action_failure.as_ref().map(|failure| failure.message.as_str()), Some("hook said no"));

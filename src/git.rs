@@ -182,6 +182,22 @@ pub mod testing {
             self.repo.worktree_file(path)
         }
 
+        /// A short hash of only digits for a copy of the newest stash, which git's stash commands
+        /// would read as a place in the stash list.
+        pub fn stash_with_digits_only_hash(&self) -> String {
+            let (tree, parents) = (self.git(&["rev-parse", "stash@{0}^{tree}"]), self.git(&["rev-parse", "stash@{0}^@"]));
+            let mut args = vec!["commit-tree", tree.trim()];
+            args.extend(parents.lines().flat_map(|parent| ["-p", parent]));
+            (0..10_000)
+                .map(|n| {
+                    let message = n.to_string();
+                    let commit = self.git(&[&args[..], &["-m", &message]].concat());
+                    commit[..7].to_owned()
+                })
+                .find(|hash| hash.bytes().all(|byte| byte.is_ascii_digit()))
+                .unwrap()
+        }
+
         /// Writes `path` and commits it.
         pub fn commit(&self, path: &str, text: &str, message: &str) {
             self.write(path, text);
