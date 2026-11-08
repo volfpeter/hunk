@@ -16,6 +16,8 @@ pub enum Action {
     /// Takes the files back to what is staged, deleting untracked ones.
     DiscardUnstaged(Vec<String>),
     Commit(String),
+    /// Stages everything, then commits it.
+    CommitAll(String),
     Checkout(String),
     CreateBranch(String),
     /// Puts changes aside, named `name` unless it is empty.
@@ -47,7 +49,7 @@ impl Action {
             Action::StageAll => "Stage all",
             Action::UnstageAll => "Unstage all",
             Action::DiscardChanges(_) | Action::DiscardUnstaged(_) => "Discard",
-            Action::Commit(_) => "Commit",
+            Action::Commit(_) | Action::CommitAll(_) => "Commit",
             Action::Checkout(_) => "Check out",
             Action::CreateBranch(_) => "New branch",
             Action::Stash { .. } => "Stash",
@@ -68,6 +70,7 @@ impl Action {
             Action::DiscardChanges(paths) => unstage(repo, paths).and_then(|()| discard_unstaged(repo, paths)),
             Action::DiscardUnstaged(paths) => discard_unstaged(repo, paths),
             Action::Commit(message) => repo.run(&["commit", "-m", message]).map(drop),
+            Action::CommitAll(message) => Action::StageAll.run(repo).and_then(|()| Action::Commit(message.clone()).run(repo)),
             Action::Checkout(branch) => repo.run(&["switch", branch]).map(drop),
             Action::CreateBranch(name) => repo.run(&["switch", "-c", name]).map(drop),
             Action::Stash { name, takes } => stash(repo, name, *takes),
@@ -221,6 +224,14 @@ mod tests {
 
         assert_eq!(fixture.git(&["log", "-1", "--format=%B"]).trim(), "second\n\nWith a body.");
         assert_eq!(status(&fixture), "?? new.txt\n");
+    }
+
+    #[test]
+    fn committing_all_takes_new_files_too() {
+        let fixture = with_changes();
+        Action::CommitAll("second".into()).run(&fixture.repo).unwrap();
+        assert_eq!(status(&fixture), "");
+        assert_eq!(fixture.git(&["show", "--format=", "--name-only", "HEAD"]), "a.txt\nnew.txt\n");
     }
 
     #[test]

@@ -4,7 +4,7 @@ use std::mem;
 use std::path::PathBuf;
 use std::time::Duration;
 
-use rune::{KeyEvent, Latest, TextEdit, Tx, Waker};
+use rune::{Key, KeyEvent, Latest, TextEdit, Tx, Waker};
 use rune_kit::diff::{Annotation, DiffMode, DiffState, FileDiff, LineRange, parse};
 use rune_kit::{FileNode, FileTree, TreeModel};
 
@@ -35,7 +35,7 @@ enum CopiedNotice {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Kind {
     Changes,
-    Unstaged,
+    Staging,
     Commits,
     Branches,
     Stashes,
@@ -43,12 +43,12 @@ pub enum Kind {
 }
 
 impl Kind {
-    pub const ALL: [Kind; 6] = [Kind::Changes, Kind::Unstaged, Kind::Commits, Kind::Branches, Kind::Stashes, Kind::Comments];
+    pub const ALL: [Kind; 6] = [Kind::Changes, Kind::Staging, Kind::Commits, Kind::Branches, Kind::Stashes, Kind::Comments];
 
     pub fn label(self) -> &'static str {
         match self {
             Kind::Changes => "Changes",
-            Kind::Unstaged => "Staged vs unstaged",
+            Kind::Staging => "Staging",
             Kind::Commits => "Commits",
             Kind::Branches => "Branches",
             Kind::Stashes => "Stashes",
@@ -101,6 +101,25 @@ impl Command {
     /// Its topic and label, as one line.
     pub fn title(&self) -> String {
         format!("{}: {}", self.topic, self.label)
+    }
+}
+
+const COMMIT: &str = "Ctrl+Enter";
+const STASH: &str = "Ctrl+Shift+S";
+const PULL: &str = "Ctrl+Shift+↓";
+const PUSH: &str = "Ctrl+Shift+↑";
+
+/// The shortcut of the git command `event` runs. Git commands go on Ctrl+Shift, and Commit on
+/// Ctrl+Enter too, which shows as its key: Ctrl+Shift+C is the other.
+fn git_shortcut(event: &KeyEvent) -> Option<&'static str> {
+    let ctrl_shift = event.mods.cmd && event.mods.shift;
+    match &event.key {
+        Key::Enter if event.mods.cmd => Some(COMMIT),
+        Key::Down if ctrl_shift => Some(PULL),
+        Key::Up if ctrl_shift => Some(PUSH),
+        _ if ctrl_shift && event.is_command('c') => Some(COMMIT),
+        _ if ctrl_shift && event.is_command('s') => Some(STASH),
+        _ => None,
     }
 }
 
@@ -284,7 +303,13 @@ impl State {
     }
 
     pub fn on_key(&mut self, event: &KeyEvent, tx: &mut Tx) -> bool {
-        if event.is_command('k') || (event.is_command('p') && event.mods.shift) {
+        if let Some(shortcut) = git_shortcut(event) {
+            if !self.dialog_open() && self.palette.is_none() {
+                self.run_shortcut(shortcut, tx);
+            }
+            return true;
+        }
+        if event.is_command('k') {
             if !self.dialog_open() {
                 self.open_palette();
             }
@@ -297,6 +322,13 @@ impl State {
             return true;
         }
         self.diff.key(event, tx)
+    }
+
+    /// Runs the command whose key is `shortcut`, if it is on offer.
+    fn run_shortcut(&mut self, shortcut: &str, tx: &mut Tx) {
+        if let Some(command) = self.commands().into_iter().find(|command| command.shortcut == Some(shortcut)) {
+            (command.run)(self, tx);
+        }
     }
 
     pub fn has_repository(&self) -> bool {
@@ -416,7 +448,7 @@ impl State {
         let selected = || self.list.selected().next().map(str::to_owned);
         match self.kind {
             Kind::Changes => Some(Review::Changes),
-            Kind::Unstaged => Some(Review::Unstaged),
+            Kind::Staging => Some(Review::Unstaged),
             Kind::Commits => selected().map(Review::Commit),
             Kind::Branches => selected().map(|branch| Review::Branch { base: self.overview.base.clone(), branch }),
             Kind::Stashes => selected().map(Review::Stash),
@@ -569,12 +601,12 @@ impl State {
 
     /// The paths of the file at index `file` that can be staged.
     pub fn stageable(&self, file: usize) -> Vec<String> {
-        self.paths_where(file, |status| status.unstaged)
+        self.paths_where(file, |status| status.unstaged.is_some())
     }
 
     /// The paths of the file at index `file` that can be unstaged.
     pub fn unstageable(&self, file: usize) -> Vec<String> {
-        self.paths_where(file, |status| status.staged)
+        self.paths_where(file, |status| status.staged.is_some())
     }
 
     /// The paths of the file at index `file` that can be discarded.
@@ -626,9 +658,17 @@ impl State {
         self.confirming = None;
     }
 
-    /// Whether there is something staged to commit.
+    pub fn can_stage_all(&self) -> bool {
+        self.running.is_none() && self.overview.files.values().any(|status| status.unstaged.is_some())
+    }
+
+    pub fn can_unstage_all(&self) -> bool {
+        self.running.is_none() && self.overview.files.values().any(|status| status.staged.is_some())
+    }
+
+    /// Whether there is anything to commit.
     pub fn can_start_commit(&self) -> bool {
-        self.running.is_none() && self.overview.staged_files() > 0
+        self.running.is_none() && !self.overview.files.is_empty()
     }
 
     pub fn can_commit(&self) -> bool {
@@ -646,11 +686,13 @@ impl State {
         self.committing = false;
     }
 
-    /// Commits what is staged. The message stays until that worked.
+    /// Commits what is staged, or everything when nothing is. The message stays until that
+    /// worked.
     pub fn commit(&mut self) {
         if self.can_commit() {
             self.committing = false;
-            self.run(Action::Commit(self.commit_text.text.trim().to_owned()));
+            let message = self.commit_text.text.trim().to_owned();
+            self.run(if self.overview.commit_plan().takes_all { Action::CommitAll(message) } else { Action::Commit(message) });
         }
     }
 
@@ -796,7 +838,7 @@ impl State {
     /// The files of the shown review that the file list holds.
     pub fn listed_files(&self) -> impl Iterator<Item = &FileDiff> {
         let worktree = self.reviews_worktree();
-        let wholly_staged = |path: &str| self.overview.files.get(path).is_some_and(|status| status.staged && !status.unstaged);
+        let wholly_staged = |path: &str| self.overview.files.get(path).is_some_and(|status| status.staged.is_some() && status.unstaged.is_none());
         self.diff.files().iter().filter(move |file| !(worktree && wholly_staged(file.path())))
     }
 
@@ -847,11 +889,10 @@ impl State {
             offer(kind != self.kind, Command::new("Review", kind.label(), move |s, _| s.select_kind(kind)));
         }
 
-        let any = |test: fn(&FileStatus) -> bool| self.overview.files.values().any(test);
-        offer(idle && any(|status| status.unstaged), Command::new("Git", "Stage all", |s, _| s.run(Action::StageAll)));
-        offer(idle && any(|status| status.staged), Command::new("Git", "Unstage all", |s, _| s.run(Action::UnstageAll)));
-        offer(self.can_start_commit(), Command::new("Git", "Commit", |s, _| s.start_commit()));
-        offer(self.can_stash(), Command::new("Git", "Stash", |s, _| s.start_stash()));
+        offer(self.can_stage_all(), Command::new("Git", "Stage all", |s, _| s.run(Action::StageAll)));
+        offer(self.can_unstage_all(), Command::new("Git", "Unstage all", |s, _| s.run(Action::UnstageAll)));
+        offer(self.can_start_commit(), Command::new("Git", "Commit", |s, _| s.start_commit()).shortcut(COMMIT));
+        offer(self.can_stash(), Command::new("Git", "Stash", |s, _| s.start_stash()).shortcut(STASH));
         if let Some(stash) = self.selected_stash() {
             offer(idle, Command::new("Git", format!("Apply stash {stash}"), |s, _| s.apply_selected_stash()));
             offer(idle, Command::new("Git", format!("Pop stash {stash}"), |s, _| s.pop_selected_stash()));
@@ -861,8 +902,8 @@ impl State {
             offer(idle, Command::new("Git", format!("Check out {branch}"), |s, _| s.check_out_selected()));
         }
         offer(idle, Command::new("Git", "New branch", |s, _| s.start_new_branch()));
-        offer(idle, Command::new("Git", "Pull", |s, _| s.run(Action::Pull)));
-        offer(self.can_push(), Command::new("Git", "Push", |s, _| s.run(Action::Push)));
+        offer(idle, Command::new("Git", "Pull", |s, _| s.run(Action::Pull)).shortcut(PULL));
+        offer(self.can_push(), Command::new("Git", "Push", |s, _| s.run(Action::Push)).shortcut(PUSH));
         offer(true, Command::new("Git", "Refresh", |s, _| s.refresh()));
 
         offer(!self.comments.open().is_empty(), Command::new("Comments", "Copy prompt", State::copy_prompt));
@@ -1068,7 +1109,7 @@ impl State {
     fn build_file_lists(&mut self) {
         let counts = |file: &FileDiff| (file.additions() as u32, file.deletions() as u32);
         let files = file_tree("files", self.listed_files().map(|file| (file.path().to_owned(), counts(file))));
-        let staged = self.overview.files.iter().filter(|(_, status)| status.staged && self.reviews_worktree());
+        let staged = self.overview.files.iter().filter(|(_, status)| status.staged.is_some() && self.reviews_worktree());
         let staged = file_tree("staged", staged.map(|(path, _)| (path.clone(), self.overview.staged_lines.get(path).copied().unwrap_or_default())));
         self.files = kept_open(&self.files, files);
         self.staged = kept_open(&self.staged, staged);
@@ -1083,7 +1124,7 @@ impl State {
         let kept = self.list.selected().next().map(str::to_owned);
         let comments: Vec<Entry>;
         let entries = match self.kind {
-            Kind::Changes | Kind::Unstaged => &[][..],
+            Kind::Changes | Kind::Staging => &[][..],
             Kind::Commits => &self.overview.commits,
             Kind::Branches => &self.overview.branches,
             Kind::Stashes => &self.overview.stashes,
@@ -1142,11 +1183,9 @@ fn comment_entry(comment: &Comment) -> Entry {
 mod tests {
     use std::collections::HashMap;
 
-    use rune::Key;
-
     use super::*;
     use crate::git::testing::Fixture;
-    use crate::overview::Upstream;
+    use crate::overview::{Change, Upstream};
 
     const TWO_FILES: &str = "diff --git a/a.txt b/a.txt\n--- a/a.txt\n+++ b/a.txt\n@@ -1 +1 @@\n-a\n+A\ndiff --git a/c.txt b/c.txt\n--- a/c.txt\n+++ b/c.txt\n@@ -1 +1 @@\n-c\n+C\n";
     const THREE_FILES: &str = "diff --git a/a.txt b/a.txt\n--- a/a.txt\n+++ b/a.txt\n@@ -1 +1 @@\n-a\n+A\ndiff --git a/b.txt b/b.txt\n--- a/b.txt\n+++ b/b.txt\n@@ -1 +1 @@\n-b\n+B\ndiff --git a/c.txt b/c.txt\n--- a/c.txt\n+++ b/c.txt\n@@ -1 +1,2 @@\n-c\n+C\n+D\n";
@@ -1166,7 +1205,7 @@ mod tests {
     }
 
     fn status(staged: bool, unstaged: bool) -> FileStatus {
-        FileStatus { staged, unstaged }
+        FileStatus { staged: staged.then_some(Change::Changed), unstaged: unstaged.then_some(Change::Changed) }
     }
 
     #[test]
@@ -1399,15 +1438,21 @@ mod tests {
     }
 
     #[test]
-    fn ctrl_shift_p_opens_the_palette_but_ctrl_p_does_not() {
+    fn git_keys_run_only_what_the_palette_offers() {
         let (_fixture, mut state) = state();
-        let ctrl_p = |shift| KeyEvent { key: Key::Command('p'), mods: rune::Mods { ctrl: true, cmd: true, shift, ..rune::Mods::default() } };
+        let ctrl = |key, shift| KeyEvent { key, mods: rune::Mods { ctrl: true, cmd: true, shift, ..rune::Mods::default() } };
 
-        state.on_key(&ctrl_p(false), &mut Tx::default());
-        assert_eq!(state.palette, None);
+        state.on_key(&ctrl(Key::Command('c'), true), &mut Tx::default());
+        assert!(!state.committing, "nothing to commit");
 
-        state.on_key(&ctrl_p(true), &mut Tx::default());
-        assert_eq!(state.palette, Some(0));
+        state.overview.files.insert("a.txt".into(), status(false, true));
+        state.confirming = Some(Action::DropStash("abc".into()));
+        state.on_key(&ctrl(Key::Enter, false), &mut Tx::default());
+        assert!(!state.committing, "a dialog is open");
+
+        state.cancel_action();
+        state.on_key(&ctrl(Key::Enter, false), &mut Tx::default());
+        assert!(state.committing);
     }
 
     #[test]
@@ -1431,7 +1476,7 @@ mod tests {
         state.open_palette();
         state.palette_text = TextEdit::new("review".to_owned());
         let labels: Vec<String> = state.palette_commands().into_iter().map(|command| command.label).collect();
-        assert_eq!(labels, ["Staged vs unstaged", "Commits", "Branches", "Stashes", "Comments"]);
+        assert_eq!(labels, ["Staging", "Commits", "Branches", "Stashes", "Comments"]);
 
         state.run_command(1, &mut Tx::default());
         assert_eq!(state.kind, Kind::Commits);

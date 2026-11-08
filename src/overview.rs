@@ -21,9 +21,50 @@ pub struct Entry {
 /// What is uncommitted about a file.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct FileStatus {
-    pub staged: bool,
-    /// Changed since it was staged, or not tracked yet.
-    pub unstaged: bool,
+    pub staged: Option<Change>,
+    /// Since it was staged. A file not tracked yet is new.
+    pub unstaged: Option<Change>,
+}
+
+/// What a change does to a file.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Change {
+    New,
+    Changed,
+    Deleted,
+}
+
+impl Change {
+    /// From a letter of `git status --porcelain`.
+    fn from_status(letter: &str) -> Option<Change> {
+        match letter {
+            " " => None,
+            "A" | "?" => Some(Change::New),
+            "D" => Some(Change::Deleted),
+            _ => Some(Change::Changed),
+        }
+    }
+}
+
+/// What a commit takes: what is staged, or everything when nothing is.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct CommitPlan {
+    /// Nothing is staged, so the commit stages everything first.
+    pub takes_all: bool,
+    pub new: usize,
+    pub changed: usize,
+    pub deleted: usize,
+    /// Files the commit takes only part of.
+    pub partly: usize,
+    /// Files the commit leaves alone.
+    pub left_out: usize,
+}
+
+impl CommitPlan {
+    /// The files the commit takes, partly or wholly.
+    pub fn files(&self) -> usize {
+        self.new + self.changed + self.deleted
+    }
 }
 
 /// Lines a change adds and removes.
@@ -73,7 +114,24 @@ impl Overview {
     }
 
     pub fn staged_files(&self) -> usize {
-        self.files.values().filter(|file| file.staged).count()
+        self.files.values().filter(|file| file.staged.is_some()).count()
+    }
+
+    pub fn commit_plan(&self) -> CommitPlan {
+        let mut plan = CommitPlan { takes_all: self.staged_files() == 0, ..CommitPlan::default() };
+        for file in self.files.values() {
+            let taken = if plan.takes_all { file.unstaged } else { file.staged };
+            match taken {
+                Some(Change::New) => plan.new += 1,
+                Some(Change::Changed) => plan.changed += 1,
+                Some(Change::Deleted) => plan.deleted += 1,
+                None => plan.left_out += 1,
+            }
+            if !plan.takes_all && file.staged.is_some() && file.unstaged.is_some() {
+                plan.partly += 1;
+            }
+        }
+        plan
     }
 }
 
@@ -162,7 +220,8 @@ fn file_statuses(repo: &Repo) -> Result<HashMap<String, FileStatus>> {
         .split_terminator('\0')
         .filter_map(|record| {
             let (index, worktree, path) = (record.get(0..1)?, record.get(1..2)?, record.get(3..)?);
-            Some((path.to_owned(), FileStatus { staged: !matches!(index, " " | "?"), unstaged: worktree != " " }))
+            let staged = if index == "?" { None } else { Change::from_status(index) };
+            Some((path.to_owned(), FileStatus { staged, unstaged: Change::from_status(worktree) }))
         })
         .collect())
 }
@@ -229,10 +288,10 @@ mod tests {
         let files = Overview::load(&fixture.repo).unwrap().files;
 
         let status = |path: &str| files.get(path).map(|file| (file.staged, file.unstaged));
-        assert_eq!(status("both.txt"), Some((true, true)));
-        assert_eq!(status("old.txt"), Some((true, false)));
-        assert_eq!(status("moved.txt"), Some((true, false)));
-        assert_eq!(status("untracked.txt"), Some((false, true)));
+        assert_eq!(status("both.txt"), Some((Some(Change::Changed), Some(Change::Changed))));
+        assert_eq!(status("old.txt"), Some((Some(Change::Deleted), None)));
+        assert_eq!(status("moved.txt"), Some((Some(Change::New), None)));
+        assert_eq!(status("untracked.txt"), Some((None, Some(Change::New))));
     }
 
     #[test]
@@ -309,5 +368,22 @@ mod tests {
         let overview = Overview::load(&Fixture::new().repo).unwrap();
         assert_eq!(overview.head, "main");
         assert!(overview.commits.is_empty());
+    }
+
+    #[test]
+    fn a_commit_takes_what_is_staged_or_everything_when_nothing_is() {
+        use Change::*;
+        let overview = |files: &[(&str, Option<Change>, Option<Change>)]| Overview {
+            files: files.iter().map(|&(path, staged, unstaged)| (path.to_owned(), FileStatus { staged, unstaged })).collect(),
+            ..Overview::default()
+        };
+
+        let staged = overview(&[("new", Some(New), None), ("partly", Some(Changed), Some(Changed)), ("gone", None, Some(Deleted))]);
+        let plan = CommitPlan { new: 1, changed: 1, partly: 1, left_out: 1, ..CommitPlan::default() };
+        assert_eq!(staged.commit_plan(), plan);
+
+        let nothing_staged = overview(&[("untracked", None, Some(New)), ("edited", None, Some(Changed)), ("gone", None, Some(Deleted))]);
+        let plan = CommitPlan { takes_all: true, new: 1, changed: 1, deleted: 1, ..CommitPlan::default() };
+        assert_eq!(nothing_staged.commit_plan(), plan);
     }
 }

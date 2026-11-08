@@ -15,7 +15,7 @@ A **Review** is a comparison between two points. There are five:
 | Review             | Compares                                         |
 | ------------------ | ------------------------------------------------ |
 | Changes            | `HEAD` vs worktree, with untracked files         |
-| Staged vs unstaged | index vs worktree, with untracked files          |
+| Staging            | index vs worktree, with untracked files          |
 | Commit             | first parent vs commit                           |
 | Branch             | merge-base with the default branch vs branch tip |
 | Stash              | its parent vs the stash                          |
@@ -28,7 +28,7 @@ Side-by-side diffs need the width, so nothing sits beside the diff. A bar picks 
 
 ```
 ┌───────────────────────────────────────────────────────────┐
-│ repo main  [Changes|Staged vs unstaged|Commits|…]  ⟳ ↓ ↑   │
+│ repo main  [Changes|Staging|Commits|…]  ⟳ ↓ ↑   │
 ├─────────────────────────────┬─────────────────────────────┤
 │ commit message, or a list   │ changed files          Split │
 ├─────────────────────────────┴─────────────────────────────┤
@@ -62,7 +62,7 @@ Done. The five reviews, file list, unified and split diff, manual refresh, all r
 
 ### DONE - Step 2: Comments for agents
 
-Peter reviews agent-written code, comments on what's wrong, hands the comments to an agent, then reviews the follow-up. A typical round: stage what's fine, comment on the rest, and use Staged vs unstaged to see only what the agent changed next. That is one example, not the focus: comments work in every review.
+Peter reviews agent-written code, comments on what's wrong, hands the comments to an agent, then reviews the follow-up. A typical round: stage what's fine, comment on the rest, and use Staging to see only what the agent changed next. That is one example, not the focus: comments work in every review.
 
 diffle is the behaviour reference.
 
@@ -92,7 +92,7 @@ Keep in mind:
 - Stashes go by hash, because `stash@{n}` shifts as stashes come and go.
 - Git runs with no stdin, so credential prompts fail. Show git's error rather than handling auth.
 - An ssh passphrase prompt may be the exception: launched from a terminal, ssh reads the tty rather than stdin, so the action could hang. Not tried or handled yet.
-- Discard means what the review shows: back to `HEAD` in Changes, back to the staged version in Staged vs unstaged.
+- Discard means what the review shows: back to `HEAD` in Changes, back to the staged version in Staging.
 - The view holds through a refresh, except when a file above the reader joins or leaves the diff: they stay in their file but land on its header (see `docs/rune-quirks.md`).
 
 Tasks:
@@ -121,22 +121,22 @@ Tasks:
 
 ### Step 4b: Commit and stash
 
-Staged vs unstaged is the review Peter finds most useful, since staging takes what he has reviewed out of the way. But it hides what is staged, so he can't see what a commit would take. The message box above the diff, with Commit and Stash below it, goes: both become dialogs.
+Staging is the review Peter finds most useful, since staging takes what he has reviewed out of the way. But it hides what is staged, so he can't see what a commit would take. The message box above the diff, with Commit and Stash below it, goes: both become dialogs.
 
-That frees the panel's left half in Changes and Staged vs unstaged, and the panel holds two file trees there: staged on the left, unstaged on the right, lined up with the split diff's sides. The right one is today's tree, now without the staged files. A partly staged file is in both. The other reviews keep their list on the left and their files on the right.
+That frees the panel's left half in Changes and Staging, and the panel holds two file trees there: staged on the left, unstaged on the right, lined up with the split diff's sides. The right one is today's tree, now without the staged files. A partly staged file is in both. The other reviews keep their list on the left and their files on the right.
 
 Keep in mind:
 
-- The staged tree is for seeing and unstaging, and must look it: in Staged vs unstaged its files are often not in the diff. If clicking through turns out to be missed, the likely answer is showing what is staged (`HEAD` vs index) in the diff.
+- The staged tree is for seeing and unstaging, and must look it: in Staging its files are often not in the diff. If clicking through turns out to be missed, the likely answer is showing what is staged (`HEAD` vs index) in the diff.
 - In Changes every file is in the diff, so both trees can jump to it.
 - A failed commit keeps its message today. The dialog must too, and a message shouldn't be lost by closing it.
 - Stash takes new files too today. The choices map to `git stash push`'s `--include-untracked` and `--staged` (git 2.35 and later), and the name to `-m`.
 
-Built: each tree's header holds its action, Commit over the staged tree and Stash over the unstaged one. Every row has Unstage or Stage, and a folder's acts on everything under it. The diff's order still comes from a tree of all its files, since the unstaged tree no longer holds them all in Changes. The staged tree marks nothing outside Changes, so it never looks like it moved the diff. Not handled: stashing tracked changes when only new files changed does nothing, silently, as git does.
+Built: each tree's header holds the action matching its rows, Unstage all over the staged tree and Stage all over the unstaged one. Commit and Stash were there first, but didn't match the trees below them: they live in the palette now, and get keys in step 4g. Every row has Unstage or Stage, and a folder's acts on everything under it. The diff's order still comes from a tree of all its files, since the unstaged tree no longer holds them all in Changes. The staged tree marks nothing outside Changes, so it never looks like it moved the diff. Not handled: stashing tracked changes when only new files changed does nothing, silently, as git does.
 
 Tasks:
 
-- [x] Show staged and unstaged files apart, in Changes and Staged vs unstaged
+- [x] Show staged and unstaged files apart, in Changes and Staging
 - [x] Commit from a dialog, replacing the message box and its buttons
 - [x] Stash from a dialog: name the stash and pick what goes: tracked changes, those and new files, or only what's staged
 
@@ -172,9 +172,9 @@ Keep in mind:
 
 Tasks:
 
-- [ ] Switch or create a branch from one dialog: local branches, then those only on a remote
+- [ ] Switch or create a branch from one dialog: local branches, then those only on a remote, on Ctrl+B and Ctrl+Shift+B
 - [ ] Check out a branch that only exists on a remote, tracking it
-- [ ] Fetch
+- [ ] Fetch, on Ctrl+Shift+F
 - [ ] Add and remove remotes from a dialog
 
 ### Step 4e: Pull requests
@@ -197,7 +197,7 @@ Tasks:
 
 Peter dislikes the always-visible top panel. A left sidebar is doubtful too, because side-by-side diffs need the width, so moving the panel to the side is unlikely to be the fix. lazygit's layout is not a reference.
 
-The panel's trouble was a lack of purpose, filled with whatever needed a place, and weak separation from the diff. Step 4b gives it a purpose in Changes and Staged vs unstaged, the staged and unstaged trees, so the fix may be its design rather than its removal.
+The panel's trouble was a lack of purpose, filled with whatever needed a place, and weak separation from the diff. Step 4b gives it a purpose in Changes and Staging, the staged and unstaged trees, so the fix may be its design rather than its removal.
 
 A first step is done: the panel and the diff are sheets on a darker page, and the diff has a status row of its own, with the summary and Unified/Split. Still open: collapsing the panel, to one line saying what is under review rather than to nothing, with a key.
 
@@ -209,11 +209,30 @@ Tasks:
 
 ### Step 4g: Hotkeys
 
-Hotkeys go in once the layout settles, so they're assigned once. Give the frequent actions a key, then add an overlay that lists every key, grouped as the palette groups its commands. The palette already shows the keys the diff has.
+Hotkeys go in once the layout settles, so they're assigned once. Give the frequent actions a key, then add an overlay that lists every key, grouped as the palette groups its commands.
+
+Decided, so a new key can be guessed from its kind:
+
+- **Ctrl+key opens a picker or switcher**, changing nothing until you pick: K the palette, O a repository, B the branches (step 4d), later P a file in the diff.
+- **Ctrl+Shift+key runs a git operation**: C commit, S stash, ↓ pull, ↑ push, B branches as an alias of Ctrl+B, F fetch (step 4d). Ctrl+Shift+P stays free: it was the palette's alias, and a VS Code habit shouldn't land on a git operation.
+- **Ctrl+Enter confirms a dialog**, and with none open starts a commit.
+- **Bare keys act on what has focus**: moving through the diff, and `s` / `u` to stage and unstage.
+
+Built: a key runs the palette command showing it, so it works exactly when the palette offers it. Git keys do nothing while a dialog or the palette is open. A text field keeps the keys it uses, so Ctrl+Shift+↑ in a comment selects text rather than pushing.
+
+Committing with nothing staged commits everything, as most apps do, new files that aren't ignored included. That made a commit key that did nothing when nothing was staged look broken. The commit dialog shows what will happen, so nothing goes in unseen:
+
+- **Split side by side**: a summary on the left, the message and Commit on the right. The dialog widens so a message still shows about 72 columns.
+- **The summary describes the commit, not the index**, so "staged" never appears: "This commit" counts new, changed and deleted files, hiding empty rows. Status runs with `--no-renames`, so a rename counts as one deleted and one new. "New" catches a stray file nobody meant to commit.
+- **"Stays uncommitted" shows only when something is staged.** Its "partly committed" row, in the warning colour, counts files the commit takes only part of, as that often means something was forgotten. A partly committed file counts in "This commit" too, as its staged part goes in. "Not included" counts the rest.
+- **One Commit button**: with nothing staged it reads "Commit all N files", stages everything, then commits. Git has no single command for that with new files, so a commit that fails, say on a hook, leaves everything staged.
+- Later, each row may open into its files.
 
 Tasks:
 
-- [ ] Assign keys to the frequent actions
+- [x] Keys for commit, stash, pull and push
+- [x] Commit everything when nothing is staged, with the dialog summarising what the commit takes
+- [ ] `s` / `u` stage and unstage the focused item: a row in either file tree, else the diff's file
 - [ ] Overlay listing every key
 
 ### Step 5: File explorer

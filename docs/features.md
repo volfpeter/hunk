@@ -16,7 +16,7 @@ Everything the app does, to try at your own pace. A tick means Peter tried it an
 ## Reviews
 
 - [ ] Changes: everything not committed, new files included
-- [ ] Staged vs unstaged: what changed since you last staged
+- [ ] Staging: what changed since you last staged
 - [ ] Commits: any of the latest 200 on the current branch
 - [ ] Branches: what a branch added since it left the default branch
 - [ ] Stashes: what a stash holds
@@ -58,14 +58,17 @@ Everything the app does, to try at your own pace. A tick means Peter tried it an
 - [ ] Stage a file
 - [ ] Unstage a file
 - [ ] Stage and unstage everything, from the palette
-- [ ] Changes and Staged vs unstaged list staged files on the left and unstaged on the right, a partly staged file in both
+- [ ] Stage all above the unstaged list, Unstage all above the staged list
+- [ ] Changes and Staging list staged files on the left and unstaged on the right, a partly staged file in both
 - [ ] The staged list shows the lines each file changes
 - [ ] Stage or unstage a file, or a whole folder, from its row in the lists
 - [ ] In Changes, a file in either list jumps to it in the diff
 - [ ] Commit from a dialog, with a multi-line message
 - [ ] A failed or closed commit dialog keeps its message
+- [ ] The commit dialog sums up what the commit takes and what stays uncommitted, marking partly committed files
+- [ ] With nothing staged, Commit takes everything, new files included
 - [ ] Discard in Changes goes back to the last commit
-- [ ] Discard in Staged vs unstaged goes back to what you staged
+- [ ] Discard in Staging goes back to what you staged
 - [ ] Discarding a new file deletes it
 - [ ] Discard and Drop ask first
 - [ ] Check out a branch
@@ -84,8 +87,9 @@ Everything the app does, to try at your own pace. A tick means Peter tried it an
 - [ ] Filter by typing, pick with the arrow keys, run with Enter
 - [ ] Commands are grouped by topic, and typing a topic filters to it
 - [ ] File commands act on the file at the top of the diff
-- [ ] Ctrl+Shift+P opens the palette too
 - [ ] Next and previous file and hunk from the palette, showing their keys
 - [ ] The palette's highlighted command stands out, marked with ›
+- [ ] Ctrl+Enter or Ctrl+Shift+C commits, Ctrl+Shift+S stashes, Ctrl+Shift+↓ pulls, Ctrl+Shift+↑ pushes
+- [ ] The palette shows those keys
 - [ ] Switch to any other review from the palette
 - [ ] Open a repository from the palette

@@ -9,7 +9,7 @@ use crate::action::{Action, Stashed};
 use crate::app::{Command, DRAFT_NOTE, Kind, State};
 use crate::comments::Comment;
 use crate::open::{Choice, tilde};
-use crate::overview::{Entry, LineCounts};
+use crate::overview::{CommitPlan, Entry, LineCounts};
 
 const BAR_HEIGHT: f32 = 48.0;
 /// The page showing between the sheets, and around them.
@@ -18,7 +18,8 @@ const PANEL_HEIGHT: f32 = 200.0;
 const DRAFT_ROWS: (usize, usize) = (3, 12);
 const COMMIT_ROWS: usize = 4;
 const CONFIRM_WIDTH: f32 = 400.0;
-const COMMIT_WIDTH: f32 = 560.0;
+const COMMIT_WIDTH: f32 = 800.0;
+const COMMIT_SUMMARY_WIDTH: f32 = 180.0;
 const FAILURE_WIDTH: f32 = 640.0;
 /// The most height git's output takes in a dialog before it scrolls.
 const FAILURE_MAX_HEIGHT: f32 = 320.0;
@@ -155,7 +156,7 @@ fn panel(s: &State, k: &Kit) -> El {
 fn staged(s: &State, k: &Kit) -> El {
     let column = col().key("staged-column").grow(1.0).min_w(0.0).h_full().padding(8.0).gap(4.0);
     let header = list_header(k, format!("Staged ({})", s.overview.staged_files()))
-        .child(small_button("Commit").disabled(!s.can_start_commit()).on_press(State::start_commit).build(k));
+        .child(small_button("Unstage all").disabled(!s.can_unstage_all()).on_press(|s: &mut State| s.run(Action::UnstageAll)).build(k));
     if s.staged.is_empty() {
         return column.child(header).child(muted(k, "Nothing staged"));
     }
@@ -241,7 +242,7 @@ fn files(s: &State, k: &Kit) -> El {
         return column.child(tree);
     }
     let header = list_header(k, format!("Unstaged ({})", s.listed_files().count()))
-        .child(small_button("Stash").disabled(!s.can_stash()).help("Put changes aside").on_press(State::start_stash).build(k));
+        .child(small_button("Stage all").disabled(!s.can_stage_all()).on_press(|s: &mut State| s.run(Action::StageAll)).build(k));
     column.child(header).child(if s.files.is_empty() { muted(k, "Nothing unstaged") } else { tree })
 }
 
@@ -522,13 +523,14 @@ fn commit_dialog(s: &State, k: &Kit, overlays: &mut Vec<El>) {
         .label("Commit message")
         .on_edit(|s: &mut State| &mut s.commit_text)
         .on_key(|s: &mut State, event: &KeyEvent, _: &mut Tx| multi_line_key(s, event, |s| &mut s.commit_text, State::commit));
-    let label = match s.overview.staged_files() {
-        1 => "Commit 1 file".to_owned(),
-        staged => format!("Commit {staged} files"),
+    let plan = s.overview.commit_plan();
+    let label = match (plan.files(), plan.takes_all) {
+        (1, _) => "Commit 1 file".to_owned(),
+        (files, true) => format!("Commit all {files} files"),
+        (files, false) => format!("Commit {files} files"),
     };
     let buttons = row()
         .w_full()
-        .padding(16.0)
         .gap(8.0)
         .items_center()
         .child(one_line("Ctrl+Enter commits".to_owned()).font(k.ty.text_small).color(k.c.text_faint))
@@ -536,14 +538,28 @@ fn commit_dialog(s: &State, k: &Kit, overlays: &mut Vec<El>) {
         .child(Button::new("Cancel").variant(ButtonVariant::Ghost).on_press(State::cancel_commit).build(k))
         .child(Button::new(label).disabled(!s.can_commit()).on_press(State::commit).build(k));
     let on = text(format!("On {}", s.overview.head)).font(k.ty.ui).color(k.c.text_muted).wrap_anywhere();
+    let message = col().grow(1.0).min_w(0.0).gap(8.0).child(on).child(field.build(k)).child(buttons);
     Dialog::new("commit", "Commit")
         .width(COMMIT_WIDTH)
         .fit()
         .open(true)
         .on_close(State::cancel_commit)
-        .child(col().w_full().px(16.0).gap(8.0).child(on).child(field.build(k)))
-        .child(buttons)
+        .child(row().w_full().px(16.0).pb(16.0).gap(24.0).child(commit_summary(k, plan)).child(message))
         .build(k, overlays);
+}
+
+/// What the commit does to files, and what it leaves uncommitted.
+fn commit_summary(k: &Kit, plan: CommitPlan) -> El {
+    let heading = |title: &str| one_line(title.to_owned()).font(k.ty.ui).color(k.c.text_muted);
+    let count = |files: usize, what: &str, color| (files > 0).then(|| one_line(format!("{files} {what}")).font(k.ty.ui).color(color).pl(8.0));
+    let summary = col().key("commit-summary").w(COMMIT_SUMMARY_WIDTH).gap(4.0).child(heading("This commit"));
+    let summary = summary.children([count(plan.new, "new", k.c.text_base), count(plan.changed, "changed", k.c.text_base), count(plan.deleted, "deleted", k.c.text_base)].into_iter().flatten());
+    if plan.partly + plan.left_out == 0 {
+        return summary;
+    }
+    summary
+        .child(heading("Stays uncommitted").pt(12.0))
+        .children([count(plan.partly, "partly committed", k.c.warning.fg), count(plan.left_out, "not included", k.c.text_base)].into_iter().flatten())
 }
 
 /// What a stash takes and what it is called.
