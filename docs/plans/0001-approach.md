@@ -1,6 +1,6 @@
 # 0001: Approach
 
-Status: step 4b done, waiting for Peter's UI review. See [Tasks](#tasks).
+Status: step 4c done, waiting for Peter's UI review. See [Tasks](#tasks).
 
 ## Intent
 
@@ -149,13 +149,15 @@ Switching repositories is the hard part: comments, the watcher, the loads and al
 - **The repository name** reads `<user-or-org>/<project>`, from `origin`'s URL, else the first remote's, else the folder's name.
 - **Recents are app state**, in `dirs`' state folder, or its data folder where there is none (macOS). The only state outside `<git-dir>/diffactive/`: add it to the invariants when it lands.
 
+Built: `State` is the open repository's state, all of it but its `Shell`, which holds what outlives a switch. Opening rebuilds `State` around the carried `Shell` (keeping the diff's layout), so nothing of the old repository survives: dropping its loads drops their answers, and dropping the watcher stops its thread. Opening finds the repository on a worker, comments included. It is refused while an action runs, whose outcome would go unseen. The start reads its folder and recents on the main thread before the window opens, as before. A path typed without `/` or `~` starts at the home folder. The name is the last two parts of a remote URL with a host, so a local remote gives the folder's name. Step 4e can grow that parser into host, owner and project.
+
 Tasks:
 
-- [ ] Let the app switch repositories
-- [ ] Open dialog with recents and path completion
-- [ ] Remember recent repositories, forgetting those that are gone
-- [ ] Start as Zed does: the folder passed, else the last repository, else an empty window
-- [ ] Name the repository `<user-or-org>/<project>`
+- [x] Let the app switch repositories
+- [x] Open dialog with recents and path completion
+- [x] Remember recent repositories, forgetting those that are gone
+- [x] Start as Zed does: the folder passed, else the last repository, else an empty window
+- [x] Name the repository `<user-or-org>/<project>`
 
 ### Step 4d: Branches and remotes
 

@@ -14,11 +14,12 @@ cd diffactive
 cargo install --path .
 ```
 
-Then run it from any repository:
+Then open a repository with it:
 
 ```bash
-cd path/to/your/repo
-diffactive
+diffactive path/to/your/repo
 ```
+
+Without a folder it opens the last repository you had open.
 
 See [how to use it](docs/how-to-use.md).

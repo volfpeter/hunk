@@ -8,6 +8,7 @@ use rune_kit::{Badge, Button, ButtonVariant, ControlSize, Dialog, FileNode, Kit,
 use crate::action::{Action, Stashed};
 use crate::app::{Command, DRAFT_NOTE, Kind, State};
 use crate::comments::Comment;
+use crate::open::{Choice, tilde};
 use crate::overview::{Entry, LineCounts};
 
 const BAR_HEIGHT: f32 = 48.0;
@@ -21,11 +22,14 @@ const COMMIT_WIDTH: f32 = 560.0;
 const FAILURE_WIDTH: f32 = 640.0;
 /// The most height git's output takes in a dialog before it scrolls.
 const FAILURE_MAX_HEIGHT: f32 = 320.0;
-const PALETTE_WIDTH: f32 = 520.0;
-const PALETTE_ROW_HEIGHT: f32 = 32.0;
-const PALETTE_MARKER_WIDTH: f32 = 12.0;
+/// Dialogs whose rows are picked with the keyboard: the palette and the open dialog.
+const PICKER_WIDTH: f32 = 560.0;
+const PICKER_ROW_HEIGHT: f32 = 32.0;
+const PICKER_MARKER_WIDTH: f32 = 12.0;
 /// The most width a list entry's detail takes from its title.
 const DETAIL_MAX_WIDTH: f32 = 240.0;
+/// The most width where a folder is takes from its name.
+const PLACE_MAX_WIDTH: f32 = 360.0;
 /// The most width the repository's name and its branch each take from the bar.
 const HEAD_MAX_WIDTH: f32 = 160.0;
 
@@ -56,8 +60,26 @@ pub fn view(s: &State, cx: &mut Cx<State>) -> El {
     stash_dialog(s, &k, &mut overlays);
     failure_dialog(s, &k, &mut overlays);
     palette_dialog(s, &k, &mut overlays);
+    open_dialog(s, &k, &mut overlays);
+    if !s.has_repository() {
+        return root(col().fill(k.c.page).padding(SHEET_GAP).child(welcome(s, &k)), overlays);
+    }
     let sheets = col().w_full().grow(1.0).min_h(0.0).px(SHEET_GAP).pb(SHEET_GAP).gap(SHEET_GAP).child(panel(s, &k)).child(main(s, &k));
     root(col().fill(k.c.page).child(bar(s, &k)).child(sheets), overlays)
+}
+
+/// The way to a repository, without one on screen, and the way to make the folder opened one.
+fn welcome(s: &State, k: &Kit) -> El {
+    let open = Button::new("Open a repository").shortcut("Ctrl+O").on_press(State::open_opener);
+    let content = match &s.not_repository {
+        Some(folder) => {
+            let buttons = row().gap(8.0).child(Button::new("Initialise repository").on_press(State::init_folder).build(k)).child(open.variant(ButtonVariant::Ghost).build(k));
+            let said = text(format!("{} isn't in a Git repository.", tilde(folder))).font(k.ty.ui_medium).color(k.c.text_base).wrap_anywhere();
+            col().w_full().items_center().gap(16.0).child(said).child(buttons)
+        }
+        None => col().items_center().gap(8.0).child(open.build(k)).child(text("Ctrl+O").font(k.ty.ui).color(k.c.text_faint)),
+    };
+    sheet(k, col().key("welcome").w_full().grow(1.0).center().padding(32.0).child(content))
 }
 
 /// `content` on a sheet of its own, apart from the page and the other sheets.
@@ -79,6 +101,19 @@ fn bar(s: &State, k: &Kit) -> El {
     let pull = if behind > 0 { format!("Pull ↓{behind}") } else { "Pull".to_owned() };
     let push = if ahead > 0 { format!("Push ↑{ahead}") } else { "Push".to_owned() };
 
+    let name = s.repo_name();
+    let repository = Button::new(name.clone())
+        .variant(ButtonVariant::Ghost)
+        .label_with(move |font, ink| one_line(name).font(font).color(ink))
+        .help("Open another repository")
+        .shortcut("Ctrl+O")
+        .disabled(!s.can_open())
+        .on_press(State::open_opener)
+        .build(k)
+        .key("repository")
+        .max_w(HEAD_MAX_WIDTH)
+        .min_w(0.0);
+
     row()
         .key("bar")
         .w_full()
@@ -86,7 +121,7 @@ fn bar(s: &State, k: &Kit) -> El {
         .px(16.0)
         .gap(12.0)
         .items_center()
-        .child(one_line(s.repo_name()).max_w(HEAD_MAX_WIDTH).font(k.ty.ui_medium).color(k.c.text_base))
+        .child(repository)
         .child(one_line(s.overview.head.clone()).max_w(HEAD_MAX_WIDTH).font(k.ty.ui).color(k.c.text_muted))
         .child(kinds.build(k))
         .child(row().grow(1.0))
@@ -580,32 +615,91 @@ fn palette_dialog(s: &State, k: &Kit, overlays: &mut Vec<El>) {
     let rows = commands.iter().enumerate().map(|(index, command)| palette_row(k, command, index == active, index));
     let list = col().key("commands").role("listbox").w_full().gap(2.0).children(rows);
     let list = if commands.is_empty() { list.child(muted(k, "Nothing matches").py(8.0)) } else { list };
-    Dialog::new("palette", "Commands").width(PALETTE_WIDTH).fit().open(true).on_close(State::close_palette).child(col().w_full().px(16.0).pb(16.0).gap(12.0).child(field.build(k)).child(list)).build(k, overlays);
-    // Dialog pushes the layer centring its panel last. Pinned to the top instead, the palette
-    // holds still as its list shrinks.
+    Dialog::new("palette", "Commands").width(PICKER_WIDTH).fit().open(true).on_close(State::close_palette).child(col().w_full().px(16.0).pb(16.0).gap(12.0).child(field.build(k)).child(list)).build(k, overlays);
+    pin_to_top(overlays);
+}
+
+/// The recent repositories, or the folders completing the path typed.
+fn open_dialog(s: &State, k: &Kit, overlays: &mut Vec<El>) {
+    let Some(active) = s.shell.opener else { return };
+    let field = TextInput::new(&s.shell.open_text)
+        .width(None)
+        .placeholder("A folder, like ~/dev/project")
+        .label("Folder")
+        .on_edit(|s: &mut State| &mut s.shell.open_text)
+        .on_change(|s: &mut State, _: &mut Tx| s.offer_folders())
+        .on_submit(|s: &mut State, _: &mut Tx| s.open_choice(s.shell.opener.unwrap_or_default()))
+        .on_key(|s: &mut State, event: &KeyEvent, _: &mut Tx| match event.key {
+            Key::Up => {
+                s.move_opener(-1);
+                true
+            }
+            Key::Down => {
+                s.move_opener(1);
+                true
+            }
+            Key::Tab => {
+                s.complete_path();
+                true
+            }
+            _ => edit_by_word(&mut s.shell.open_text, event),
+        });
+    let offer = &s.shell.offer;
+    let rows = offer.choices.iter().enumerate().map(|(index, choice)| choice_row(k, choice, index == active, index));
+    let list = col().key("folders").role("listbox").w_full().gap(2.0).children(rows);
+    let typed = s.shell.open_text.text.trim();
+    let none = match typed {
+        "" => "No recent repositories",
+        _ if typed.ends_with('/') => "No folders in it, so Enter opens it",
+        _ => "No folders match",
+    };
+    let list = if offer.choices.is_empty() && !s.offer_pending() { list.child(muted(k, none).py(8.0)) } else { list };
+    let more = (offer.more > 0).then(|| muted(k, &format!("{} more, type to narrow them down", offer.more)).py(4.0));
+    let hint = text("Tab completes the folder, Enter opens it").font(k.ty.text_small).color(k.c.text_faint).px(8.0);
+    let content = col().w_full().px(16.0).pb(16.0).gap(12.0).child(field.build(k)).child(list.children(more)).child(hint);
+    Dialog::new("open", "Open a repository").width(PICKER_WIDTH).fit().open(true).on_close(State::close_opener).child(content).build(k, overlays);
+    pin_to_top(overlays);
+}
+
+/// Pins the dialog just built to the top of the window, so it holds still as its list shrinks.
+/// Dialog pushes the layer centring its panel last.
+fn pin_to_top(overlays: &mut Vec<El>) {
     if let Some(layer) = overlays.pop() {
         overlays.push(layer.items_start());
     }
 }
 
-/// A command in the palette, its key at the end. The highlighted one is marked, as Enter runs it.
+/// A command in the palette, its key at the end.
 fn palette_row(k: &Kit, command: &Command, active: bool, index: usize) -> El {
-    let marker = row().w(PALETTE_MARKER_WIDTH).children(active.then(|| text("›").font(k.ty.ui_medium).color(k.c.text_faint)));
+    let shortcut = command.shortcut.map(|key| text(key).font(k.ty.mono).color(k.c.text_faint));
+    picker_row(k, format!("command{index}"), command.title(), shortcut, active, move |s, tx| s.run_command(index, tx))
+}
+
+/// A folder in the open dialog, with where it is or whether it is a repository.
+fn choice_row(k: &Kit, choice: &Choice, active: bool, index: usize) -> El {
+    let detail = (!choice.detail.is_empty()).then(|| one_line(choice.detail.clone()).truncate_head().max_w(PLACE_MAX_WIDTH).font(k.ty.text_small).color(k.c.text_faint));
+    picker_row(k, format!("folder{index}"), choice.name.clone(), detail, active, move |s, _| s.open_choice(index))
+}
+
+/// A row of a dialog's list, `trailing` at its end. The highlighted one is marked, as Enter
+/// picks it.
+fn picker_row(k: &Kit, key: String, title: String, trailing: Option<El>, active: bool, pick: impl Fn(&mut State, &mut Tx) + 'static) -> El {
+    let marker = row().w(PICKER_MARKER_WIDTH).children(active.then(|| text("›").font(k.ty.ui_medium).color(k.c.text_faint)));
     let item = row()
-        .key(format!("command{index}"))
+        .key(key)
         .role("option")
-        .label(command.title())
+        .label(title.clone())
         .w_full()
-        .h(PALETTE_ROW_HEIGHT)
+        .h(PICKER_ROW_HEIGHT)
         .px(8.0)
         .gap(4.0)
         .items_center()
         .radius(k.radius.md)
         .child(marker)
-        .child(one_line(command.title()).font(k.ty.ui_medium).color(k.c.text_base))
+        .child(one_line(title).font(k.ty.ui_medium).color(k.c.text_base))
         .child(row().grow(1.0))
-        .children(command.shortcut.map(|key| text(key).font(k.ty.mono).color(k.c.text_faint)))
-        .on_press_tx(move |s: &mut State, tx: &mut Tx| s.run_command(index, tx));
+        .children(trailing)
+        .on_press_tx(pick);
     // Highlighted as the file lists mark their selection.
     if active { item.fill(TreeStyle::from_kit(k).selected) } else { item.hover(k.c.hover) }
 }
@@ -613,13 +707,15 @@ fn palette_row(k: &Kit, command: &Command, active: bool, index: usize) -> El {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::app::Shell;
     use crate::comments::Comments;
     use crate::git::testing::Fixture;
+    use crate::open::Opened;
 
     #[test]
     fn in_a_multi_line_field_enter_starts_a_line_and_ctrl_enter_saves() {
         let fixture = Fixture::new();
-        let mut state = State::new(fixture.repo.clone(), Comments::load(fixture.repo.clone()));
+        let mut state = State::new(Some(Opened::Repository(fixture.repo.clone(), Comments::load(&fixture.repo))), Shell::default());
         state.draft_text = TextEdit::new("one".to_owned());
         let press = |mods| KeyEvent { key: Key::Enter, mods };
         let text: for<'a> fn(&'a mut State) -> &'a mut TextEdit = |s| &mut s.draft_text;

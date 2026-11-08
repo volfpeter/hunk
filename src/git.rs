@@ -125,6 +125,11 @@ impl Repo {
     }
 }
 
+/// Makes `dir` a repository.
+pub fn init(dir: &Path) -> Result<()> {
+    run_in(dir, &["init", "-q"], &[0]).map(drop)
+}
+
 fn run_in(dir: &Path, args: &[&str], ok_codes: &[i32]) -> Result<String> {
     let output = Command::new("git")
         .args(CONFIG)

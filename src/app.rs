@@ -1,5 +1,7 @@
 //! The app's state and what changes it.
 
+use std::mem;
+use std::path::PathBuf;
 use std::time::Duration;
 
 use rune::{KeyEvent, Latest, TextEdit, Tx, Waker};
@@ -9,7 +11,9 @@ use rune_kit::{FileNode, FileTree, TreeModel};
 use crate::action::{Action, Stashed};
 use crate::comments::{Anchor, Comment, Comments, prompt};
 use crate::git::{Repo, Result};
+use crate::open::{Choice, Offer, Opened, resolve};
 use crate::overview::{Entry, FileStatus, LineCounts, Overview};
+use crate::recent::Recents;
 use crate::review::{Loaded, Review};
 use crate::watch::RepoWatch;
 
@@ -100,8 +104,32 @@ impl Command {
     }
 }
 
+/// What outlives the repository on screen.
+#[derive(Default)]
+pub struct Shell {
+    waker: Option<Waker>,
+    pub recents: Recents,
+    pub open_text: TextEdit,
+    /// The highlighted row of the open dialog, while it is open.
+    pub opener: Option<usize>,
+    /// What the open dialog offers for the path typed.
+    pub offer: Offer,
+    offer_load: Latest<Offer>,
+    open_load: Latest<std::result::Result<Opened, String>>,
+}
+
+impl Shell {
+    pub fn new(recents: Recents) -> Shell {
+        Shell { recents, ..Shell::default() }
+    }
+}
+
+/// The window's state. All of it is about the repository on screen, but for `shell`.
 pub struct State {
-    repo: Repo,
+    /// `None` leaves the rest empty.
+    repo: Option<Repo>,
+    /// A folder opened outside any repository, which can be made one.
+    pub not_repository: Option<PathBuf>,
     pub kind: Kind,
     pub overview: Overview,
     /// The commits, branches or stashes on offer.
@@ -149,14 +177,22 @@ pub struct State {
     patch_load: Latest<Result<Loaded>>,
     action_load: Latest<(Action, Result<()>)>,
     watch: Option<RepoWatch>,
+    pub shell: Shell,
 }
 
 impl State {
-    pub fn new(repo: Repo, comments: Comments) -> State {
+    /// A window on what `opened` found, if anything.
+    pub fn new(opened: Option<Opened>, shell: Shell) -> State {
         let mut diff = DiffState::default();
         diff.set_mode(DiffMode::Split);
+        let (repo, comments, not_repository) = match opened {
+            Some(Opened::Repository(repo, comments)) => (Some(repo), comments, None),
+            Some(Opened::Folder(folder)) => (None, Comments::default(), Some(folder)),
+            None => (None, Comments::default(), None),
+        };
         State {
             repo,
+            not_repository,
             kind: Kind::Changes,
             overview: Overview::default(),
             list: TreeModel::new().key("list"),
@@ -189,27 +225,43 @@ impl State {
             patch_load: Latest::default(),
             action_load: Latest::default(),
             watch: None,
+            shell,
         }
     }
 
     pub fn setup(&mut self, waker: Waker) {
-        self.overview_load.set_waker(waker.clone());
-        self.patch_load.set_waker(waker.clone());
-        self.action_load.set_waker(waker.clone());
-        self.comments.set_waker(waker.clone());
-        self.watch = Some(RepoWatch::start(self.repo.clone(), waker));
-        self.refresh();
+        self.shell.offer_load.set_waker(waker.clone());
+        self.shell.open_load.set_waker(waker.clone());
+        self.shell.waker = Some(waker);
+        self.start();
     }
 
     /// Lands finished loads; returns whether any did.
     pub fn poll(&mut self, clock: f64, tx: &mut Tx) -> bool {
+        let opened = self.shell.open_load.take();
+        let opened_failed = match opened {
+            Some(Ok(opened)) => {
+                // What else landed was about the repository it replaces.
+                self.show_opened(opened);
+                return true;
+            }
+            Some(Err(message)) => {
+                self.action_failure = Some(ActionFailure { action: "Open", message });
+                true
+            }
+            None => false,
+        };
+        let offer = self.shell.offer_load.take();
         let overview = self.overview_load.take();
         let patch = self.patch_load.take();
         let comments = self.comments.poll();
         let action = self.action_load.take();
         let (repo_changed, watch_failure) = self.watch.as_ref().map_or((false, None), RepoWatch::take);
         let copied_ended = self.step_copied_notice(clock, tx);
-        let landed = overview.is_some() || patch.is_some() || comments || action.is_some() || watch_failure.is_some() || copied_ended;
+        let landed = opened_failed || offer.is_some() || overview.is_some() || patch.is_some() || comments || action.is_some() || watch_failure.is_some() || copied_ended;
+        if let Some(offer) = offer {
+            self.show_offer(offer);
+        }
         if watch_failure.is_some() {
             self.watch_error = watch_failure;
         }
@@ -238,17 +290,99 @@ impl State {
             }
             return true;
         }
+        if event.is_command('o') {
+            if !self.dialog_open() {
+                self.open_opener();
+            }
+            return true;
+        }
         self.diff.key(event, tx)
     }
 
+    pub fn has_repository(&self) -> bool {
+        self.repo.is_some()
+    }
+
+    /// `<user-or-org>/<project>` when a remote says, else the name of the worktree's folder.
     pub fn repo_name(&self) -> String {
-        self.repo.name()
+        self.overview.project.clone().or_else(|| self.repo.as_ref().map(Repo::name)).unwrap_or_default()
+    }
+
+    /// Whether another repository can be opened: not while an action runs, whose outcome would
+    /// go unseen.
+    pub fn can_open(&self) -> bool {
+        self.running.is_none()
+    }
+
+    /// Opens the open dialog, offering the recent repositories.
+    pub fn open_opener(&mut self) {
+        if !self.can_open() {
+            return;
+        }
+        self.palette = None;
+        self.shell.open_text = TextEdit::default();
+        self.shell.offer = Offer::default();
+        self.shell.opener = Some(0);
+        self.focus(|s| &mut s.shell.open_text);
+        self.offer_folders();
+    }
+
+    pub fn close_opener(&mut self) {
+        self.shell.opener = None;
+    }
+
+    /// Asks what to offer for the path typed into the open dialog. The repository on screen is
+    /// no use among the recent ones.
+    pub fn offer_folders(&mut self) {
+        let current = self.repo.as_ref().map(Repo::root);
+        let recent: Vec<PathBuf> = self.shell.recents.roots().iter().filter(|root| Some(root.as_path()) != current).cloned().collect();
+        self.shell.offer_load.request((self.shell.open_text.text.clone(), recent), |(typed, recent)| Offer::new(&typed, &recent));
+    }
+
+    /// Whether the open dialog waits for what to offer.
+    pub fn offer_pending(&self) -> bool {
+        self.shell.offer_load.is_pending()
+    }
+
+    /// Moves the open dialog's highlight by `rows`, stopping at the ends.
+    pub fn move_opener(&mut self, rows: isize) {
+        let last = self.shell.offer.choices.len().saturating_sub(1);
+        self.shell.opener = self.shell.opener.map(|active| active.saturating_add_signed(rows).min(last));
+    }
+
+    /// Completes the path typed with the highlighted folder.
+    pub fn complete_path(&mut self) {
+        let Some(choice) = self.highlighted_choice() else { return };
+        self.shell.open_text = TextEdit::new(choice.completion.clone());
+        self.focus(|s| &mut s.shell.open_text);
+        self.offer_folders();
+    }
+
+    /// Opens the folder on row `row` of the open dialog, or the path typed when nothing is on
+    /// offer.
+    pub fn open_choice(&mut self, row: usize) {
+        let typed = self.shell.open_text.text.trim();
+        let folder = match self.shell.offer.choices.get(row) {
+            Some(choice) => choice.path.clone(),
+            None if !typed.is_empty() => resolve(typed),
+            None => return,
+        };
+        self.close_opener();
+        self.shell.open_load.request(folder, |folder| Opened::find(&folder));
+    }
+
+    /// Makes the folder on screen a repository, and opens it.
+    pub fn init_folder(&mut self) {
+        if let Some(folder) = self.not_repository.clone() {
+            self.shell.open_load.request(folder, |folder| Opened::init(&folder));
+        }
     }
 
     /// Reads the repository again, then the review on screen, and finds comments' code again.
     pub fn refresh(&mut self) {
-        self.overview_load.request(self.repo.clone(), |repo| Overview::load(&repo));
-        self.comments.follow_code();
+        let Some(repo) = &self.repo else { return };
+        self.overview_load.request(repo.clone(), |repo| Overview::load(&repo));
+        self.comments.follow_code(repo);
     }
 
     pub fn select_kind(&mut self, kind: Kind) {
@@ -266,8 +400,8 @@ impl State {
 
     /// Shows the entry selected in the list.
     pub fn load_review(&mut self) {
-        match self.review() {
-            Some(review) => self.patch_load.request((self.repo.clone(), review), |(repo, review)| review.load(&repo)),
+        match self.repo.clone().zip(self.review()) {
+            Some(request) => self.patch_load.request(request, |(repo, review)| review.load(&repo)),
             None => {
                 self.patch_load.cancel();
                 self.shown = None;
@@ -349,7 +483,9 @@ impl State {
     /// Makes the comment open again, and looks for its code, which nothing followed meanwhile.
     pub fn reopen_comment(&mut self, id: u64) {
         self.comments.set_resolved(id, false);
-        self.comments.follow_code();
+        if let Some(repo) = &self.repo {
+            self.comments.follow_code(repo);
+        }
         self.comments_changed();
     }
 
@@ -413,9 +549,9 @@ impl State {
 
     /// Runs `action` in the background, unless one is running already.
     pub fn run(&mut self, action: Action) {
-        if self.running.is_none() {
+        if let Some(repo) = self.repo.clone().filter(|_| self.running.is_none()) {
             self.running = Some(action.label());
-            self.action_load.request((self.repo.clone(), action), |(repo, action)| {
+            self.action_load.request((repo, action), |(repo, action)| {
                 let result = action.run(&repo);
                 (action, result)
             });
@@ -677,6 +813,10 @@ impl State {
     /// Everything available right now, by topic. Actions on a file act on the one at the top of
     /// the diff.
     fn commands(&self) -> Vec<Command> {
+        let open = Command::new("Repository", "Open", |s, _| s.open_opener()).shortcut("Ctrl+O");
+        if self.repo.is_none() {
+            return vec![open];
+        }
         let mut commands = Vec::new();
         let mut offer = |available: bool, command: Command| {
             if available {
@@ -726,6 +866,7 @@ impl State {
         offer(true, Command::new("Git", "Refresh", |s, _| s.refresh()));
 
         offer(!self.comments.open().is_empty(), Command::new("Comments", "Copy prompt", State::copy_prompt));
+        offer(self.can_open(), open);
         commands
     }
 
@@ -744,7 +885,41 @@ impl State {
     }
 
     fn dialog_open(&self) -> bool {
-        self.deleting.is_some() || self.confirming.is_some() || self.naming_branch || self.committing || self.stashing.is_some() || self.action_failure.is_some()
+        self.deleting.is_some() || self.confirming.is_some() || self.naming_branch || self.committing || self.stashing.is_some() || self.action_failure.is_some() || self.shell.opener.is_some()
+    }
+
+    /// The folder highlighted in the open dialog.
+    fn highlighted_choice(&self) -> Option<&Choice> {
+        self.shell.opener.and_then(|row| self.shell.offer.choices.get(row))
+    }
+
+    /// Starts on the repository on screen, once there is a waker: remembers it, watches it and
+    /// loads it.
+    fn start(&mut self) {
+        let (Some(repo), Some(waker)) = (self.repo.clone(), self.shell.waker.clone()) else { return };
+        self.shell.recents.remember(repo.root());
+        self.overview_load.set_waker(waker.clone());
+        self.patch_load.set_waker(waker.clone());
+        self.action_load.set_waker(waker.clone());
+        self.comments.set_waker(waker.clone());
+        self.watch = Some(RepoWatch::start(repo, waker));
+        self.refresh();
+    }
+
+    /// Puts what `opened` found in place of the repository on screen, starting afresh but for the
+    /// diff's layout.
+    fn show_opened(&mut self, opened: Opened) {
+        let mode = self.diff.mode();
+        *self = State::new(Some(opened), mem::take(&mut self.shell));
+        self.diff.set_mode(mode);
+        self.start();
+    }
+
+    /// Takes in what the open dialog offers, forgetting the recent repositories that are gone.
+    fn show_offer(&mut self, offer: Offer) {
+        self.shell.recents.forget(&offer.gone);
+        self.shell.offer = offer;
+        self.shell.opener = self.shell.opener.map(|_| 0);
     }
 
     /// Whether the diff on screen holds every staged file.
@@ -754,7 +929,7 @@ impl State {
 
     /// Gives the keyboard to one text field, which takes it from every other.
     fn focus(&mut self, field: fn(&mut State) -> &mut TextEdit) {
-        for text in [&mut self.draft_text, &mut self.edit_text, &mut self.commit_text, &mut self.stash_text, &mut self.branch_text, &mut self.palette_text] {
+        for text in [&mut self.draft_text, &mut self.edit_text, &mut self.commit_text, &mut self.stash_text, &mut self.branch_text, &mut self.palette_text, &mut self.shell.open_text] {
             text.focused = false;
         }
         field(self).focused = true;
@@ -978,7 +1153,7 @@ mod tests {
 
     fn state() -> (Fixture, State) {
         let fixture = Fixture::new();
-        let state = State::new(fixture.repo.clone(), Comments::load(fixture.repo.clone()));
+        let state = State::new(Some(Opened::Repository(fixture.repo.clone(), Comments::load(&fixture.repo))), Shell::default());
         (fixture, state)
     }
 
@@ -1272,6 +1447,30 @@ mod tests {
 
         assert!(labels.contains(&"Stage a.txt".to_owned()) && labels.contains(&"Discard a.txt".to_owned()), "{labels:?}");
         assert!(!labels.iter().any(|label| label.starts_with("Unstage")), "{labels:?}");
+    }
+
+    #[test]
+    fn opening_another_repository_starts_afresh_but_for_the_diff_layout() {
+        let (_fixture, mut state) = state();
+        land(&mut state, Review::Changes, TWO_FILES);
+        state.select_kind(Kind::Commits);
+        state.diff.set_mode(DiffMode::Unified);
+        state.shell.open_text = TextEdit::new("~/elsewhere".to_owned());
+        let other = Fixture::new();
+
+        state.show_opened(Opened::Repository(other.repo.clone(), Comments::load(&other.repo)));
+
+        assert_eq!(state.repo.as_ref().map(Repo::root), Some(other.repo.root()));
+        assert_eq!((state.kind, state.diff.files().len(), state.diff.mode()), (Kind::Changes, 0, DiffMode::Unified));
+        assert_eq!(state.shell.open_text.text, "~/elsewhere");
+    }
+
+    #[test]
+    fn a_window_without_a_repository_offers_only_to_open_one() {
+        let state = State::new(Some(Opened::Folder(PathBuf::from("/somewhere"))), Shell::default());
+
+        assert_eq!(state.commands().into_iter().map(|command| command.title()).collect::<Vec<_>>(), ["Repository: Open"]);
+        assert_eq!(state.not_repository, Some(PathBuf::from("/somewhere")));
     }
 
     #[test]

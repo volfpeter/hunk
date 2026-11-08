@@ -1,6 +1,14 @@
 # How to use diffactive
 
-Run `diffactive` from any Git repository.
+## Open a repository
+
+`diffactive ~/dev/project` opens the repository that folder is in, and `diffactive .` the one you're in. `diffactive` alone opens the last repository you had open. Without one it shows an empty window, with **Open a repository**.
+
+Open a folder that isn't in a repository, and it offers **Initialise repository**, which turns it into one.
+
+**Ctrl+O**, or clicking the repository's name in the top left, opens another repository. With nothing typed, it lists the ones you opened recently. Type a path, like `~/dev/`, to see the folders there, with repositories marked. A path without `/` or `~` at the start starts in your home folder. Use the arrow keys to pick, **Tab** to complete the picked folder and **Enter** to open it. Nothing can be opened while a Git action runs.
+
+The name in the bar comes from the repository's `origin` remote, like `owner/project`, or from its folder when it has none.
 
 ## Pick what to review
 
@@ -82,4 +90,4 @@ They use your own Git setup, but can't answer prompts: if Git needs a password i
 
 **Ctrl+K** or **Ctrl+Shift+P** opens a list of everything you can do right now. Each command starts with its topic, such as **Git:** or **Review:**. Type to filter, by topic too, use the arrow keys to pick and **Enter** to run the command marked with **›**. Actions on a file act on the one at the top of the diff, and those on a branch or stash on the one selected in the list.
 
-The list also moves through the diff and switches to another review. Moving shows its key, to use without the list: **]** and **[** go to the next and previous file, **j** and **k** to the next and previous change.
+The list also moves through the diff, switches to another review and opens another repository. Moving shows its key, to use without the list: **]** and **[** go to the next and previous file, **j** and **k** to the next and previous change.

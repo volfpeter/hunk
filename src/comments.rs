@@ -223,15 +223,15 @@ fn followed(repo: &Repo, mut comments: Vec<Comment>) -> Vec<Comment> {
 }
 
 /// A repository's comments, kept in its git folder. Writes happen in the background, one at a
-/// time, so the file always ends up with the latest state.
+/// time, so the file always ends up with the latest state. The default has none and keeps none.
+#[derive(Default)]
 pub struct Comments {
-    repo: Repo,
-    file: PathBuf,
+    /// Where they are kept: `None` when the file holds something unreadable, which saving would
+    /// destroy.
+    file: Option<PathBuf>,
     all: Vec<Comment>,
     /// Why comments can't be read or kept.
     pub error: Option<String>,
-    /// False when the file holds something unreadable, which saving would destroy.
-    writable: bool,
     saving: bool,
     unsaved: bool,
     follow_load: Latest<Vec<Comment>>,
@@ -240,19 +240,14 @@ pub struct Comments {
 
 impl Comments {
     /// Reads the repository's comments.
-    pub fn load(repo: Repo) -> Comments {
+    pub fn load(repo: &Repo) -> Comments {
         let file = repo.state_dir().join(FILE_NAME);
         let read = read_file(&file);
         Comments {
-            repo,
-            file,
-            writable: read.is_ok(),
+            file: read.is_ok().then_some(file),
             error: read.as_ref().err().cloned(),
             all: read.unwrap_or_default(),
-            saving: false,
-            unsaved: false,
-            follow_load: Latest::default(),
-            save_load: Latest::default(),
+            ..Comments::default()
         }
     }
 
@@ -323,10 +318,10 @@ impl Comments {
         self.save();
     }
 
-    /// Looks for every open comment's code again, in the background.
-    pub fn follow_code(&mut self) {
+    /// Looks for every open comment's code in `repo` again, in the background.
+    pub fn follow_code(&mut self, repo: &Repo) {
         let open = self.open().into_iter().cloned().collect();
-        self.follow_load.request((self.repo.clone(), open), |(repo, open)| followed(&repo, open));
+        self.follow_load.request((repo.clone(), open), |(repo, open)| followed(&repo, open));
     }
 
     fn apply_followed(&mut self, followed: Vec<Comment>) {
@@ -346,15 +341,13 @@ impl Comments {
     }
 
     fn save(&mut self) {
-        if !self.writable {
-            return;
-        }
+        let Some(file) = &self.file else { return };
         if self.saving {
             self.unsaved = true;
             return;
         }
         self.saving = true;
-        self.save_load.request((self.file.clone(), self.all.clone()), |(file, all)| write_file(&file, all));
+        self.save_load.request((file.clone(), self.all.clone()), |(file, all)| write_file(&file, all));
     }
 }
 
@@ -515,7 +508,7 @@ Was this right?
         fs::create_dir_all(file.parent().unwrap()).unwrap();
         fs::write(&file, "not json").unwrap();
 
-        let mut comments = Comments::load(fixture.repo.clone());
+        let mut comments = Comments::load(&fixture.repo);
         assert!(comments.error.is_some());
         comments.add(anchor(1, &["a"]), Review::Changes, None, "Lost for now".into());
         assert_eq!(fs::read_to_string(&file).unwrap(), "not json");
@@ -524,7 +517,7 @@ Was this right?
     #[test]
     fn resolved_comments_list_after_open_ones_and_leave_the_prompt_until_reopened() {
         let fixture = Fixture::new();
-        let mut comments = Comments::load(fixture.repo.clone());
+        let mut comments = Comments::load(&fixture.repo);
         comments.add(anchor(1, &["a"]), Review::Changes, None, "First".into());
         comments.add(anchor(2, &["b"]), Review::Changes, None, "Second".into());
         let ids = |comments: &[&Comment]| comments.iter().map(|comment| comment.id).collect::<Vec<_>>();
@@ -539,7 +532,7 @@ Was this right?
     #[test]
     fn code_found_before_an_edit_or_delete_does_not_undo_it() {
         let fixture = Fixture::new();
-        let mut comments = Comments::load(fixture.repo.clone());
+        let mut comments = Comments::load(&fixture.repo);
         comments.add(anchor(1, &["a"]), Review::Changes, None, "Before".into());
         comments.add(anchor(2, &["b"]), Review::Changes, None, "Doomed".into());
         let found: Vec<Comment> = comments.all.iter().cloned().map(|comment| Comment { outdated: true, ..comment }).collect();

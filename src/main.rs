@@ -4,27 +4,40 @@ mod action;
 mod app;
 mod comments;
 mod git;
+mod open;
 mod overview;
+mod recent;
 mod review;
 mod view;
 mod watch;
 
+use std::path::Path;
 use std::process::ExitCode;
 
 use rune::{App, AppSpec};
 
-use app::State;
-use comments::Comments;
-use git::Repo;
+use app::{Shell, State};
+use open::Opened;
+use recent::Recents;
 
 const NAME: &str = "diffactive";
 const WINDOW_SIZE: (f32, f32) = (1500.0, 950.0);
 
+/// Starts on the folder passed, else the last repository if it is still one, else nothing. The
+/// folder the app runs in doesn't count, so a launcher and a terminal start alike.
 fn main() -> ExitCode {
-    let repo = match std::env::current_dir().map_err(|e| e.to_string()).and_then(|dir| Repo::discover(&dir).map_err(|e| e.to_string())) {
-        Ok(repo) => repo,
-        Err(e) => {
-            eprintln!("{NAME}: {e}");
+    let recents = Recents::load();
+    let opened = match rune::extra_args() {
+        [] => recents.roots().first().and_then(|root| Opened::find(root).ok()).filter(|opened| matches!(opened, Opened::Repository(..))),
+        [folder] => match Opened::find(Path::new(folder)) {
+            Ok(opened) => Some(opened),
+            Err(error) => {
+                eprintln!("{NAME}: {error}");
+                return ExitCode::from(2);
+            }
+        },
+        _ => {
+            eprintln!("usage: {NAME} [folder]");
             return ExitCode::from(2);
         }
     };
@@ -35,7 +48,7 @@ fn main() -> ExitCode {
         families: ("Inter", "ui-monospace, Inter"),
         ..AppSpec::new(NAME, WINDOW_SIZE, || unreachable!("App::init builds the state"), view::view)
     };
-    let comments = Comments::load(repo.clone());
-    App::new(spec).init(move || State::new(repo, comments)).modifier_keys().run();
+    let shell = Shell::new(recents);
+    App::new(spec).init(move || State::new(opened, shell)).modifier_keys().run();
     ExitCode::SUCCESS
 }

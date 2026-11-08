@@ -20,16 +20,26 @@ const CHECKED_AT_ONCE: usize = 500;
 /// What in the git folder changes without changing what git reports.
 const GIT_DIR_NOISE: [&str; 3] = ["objects", "logs", crate::NAME];
 
+/// What the watching thread hears.
+enum Heard {
+    Changed(PathBuf),
+    Stop,
+}
+
 /// Watches a repository from its own thread, since watching means walking the worktree.
+/// Dropping it stops the watching.
 pub struct RepoWatch {
     reports: Receiver<Result<(), String>>,
+    stop: Sender<Heard>,
 }
 
 impl RepoWatch {
     pub fn start(repo: Repo, waker: Waker) -> RepoWatch {
         let (report, reports) = mpsc::channel();
-        thread::spawn(move || watch(&repo, &report, &waker));
-        RepoWatch { reports }
+        let (heard, hearing) = mpsc::channel();
+        let stop = heard.clone();
+        thread::spawn(move || watch(&repo, heard, &hearing, &report, &waker));
+        RepoWatch { reports, stop }
     }
 
     /// What was noticed since the last call: whether the repository changed, and why watching
@@ -46,19 +56,24 @@ impl RepoWatch {
     }
 }
 
-fn watch(repo: &Repo, report: &Sender<Result<(), String>>, waker: &Waker) {
+impl Drop for RepoWatch {
+    fn drop(&mut self) {
+        // The thread is gone already when watching failed to start.
+        let _ = self.stop.send(Heard::Stop);
+    }
+}
+
+fn watch(repo: &Repo, heard: Sender<Heard>, hearing: &Receiver<Heard>, report: &Sender<Result<(), String>>, waker: &Waker) {
     let send = |result| {
         // With the receiver gone there is nobody left to tell.
         let _ = report.send(result);
         waker();
     };
-    let (events, paths) = mpsc::channel();
-    let started = start_watcher(repo, events);
-    let _watcher = match started {
+    let _watcher = match start_watcher(repo, heard) {
         Ok(watcher) => watcher,
         Err(error) => return send(Err(error.to_string())),
     };
-    while let Some(burst) = next_burst(&paths) {
+    while let Some(burst) = next_burst(hearing) {
         if burst.iter().any(|path| counts_in_git_dir(path, repo.git_dir()) == Some(true)) || touches_tracked_or_new(repo, &burst) {
             send(Ok(()));
         }
@@ -66,14 +81,14 @@ fn watch(repo: &Repo, report: &Sender<Result<(), String>>, waker: &Waker) {
 }
 
 /// Watches the worktree, and the git folder too because it lies elsewhere in a linked worktree.
-fn start_watcher(repo: &Repo, paths: Sender<PathBuf>) -> notify::Result<RecommendedWatcher> {
+fn start_watcher(repo: &Repo, heard: Sender<Heard>) -> notify::Result<RecommendedWatcher> {
     let mut watcher = notify::recommended_watcher(move |event: notify::Result<Event>| {
         let Ok(event) = event else { return };
         // Reading a file is an event too, but changes nothing.
         if !event.kind.is_access() {
             for path in event.paths {
                 // With the receiver gone there is nobody left to tell.
-                let _ = paths.send(path);
+                let _ = heard.send(Heard::Changed(path));
             }
         }
     })?;
@@ -82,18 +97,19 @@ fn start_watcher(repo: &Repo, paths: Sender<PathBuf>) -> notify::Result<Recommen
     Ok(watcher)
 }
 
-/// The paths of the next burst of changes, or `None` once nothing can arrive.
-fn next_burst(paths: &Receiver<PathBuf>) -> Option<HashSet<PathBuf>> {
-    let mut burst = HashSet::from([paths.recv().ok()?]);
+/// The paths of the next burst of changes, or `None` once told to stop.
+fn next_burst(hearing: &Receiver<Heard>) -> Option<HashSet<PathBuf>> {
+    let Ok(Heard::Changed(first)) = hearing.recv() else { return None };
+    let mut burst = HashSet::from([first]);
     let latest = Instant::now() + MOST_WAIT;
     loop {
         let wait = QUIET_FOR.min(latest.saturating_duration_since(Instant::now()));
-        match paths.recv_timeout(wait) {
-            Ok(path) => {
+        match hearing.recv_timeout(wait) {
+            Ok(Heard::Changed(path)) => {
                 burst.insert(path);
             }
             Err(RecvTimeoutError::Timeout) => return Some(burst),
-            Err(RecvTimeoutError::Disconnected) => return None,
+            Ok(Heard::Stop) | Err(RecvTimeoutError::Disconnected) => return None,
         }
     }
 }

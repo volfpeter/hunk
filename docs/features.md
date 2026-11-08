@@ -2,6 +2,17 @@
 
 Everything the app does, to try at your own pace. A tick means Peter tried it and it works: agents add features unticked and never tick them. How to use each one is in [how-to-use.md](how-to-use.md).
 
+## Repositories
+
+- [ ] `diffactive <folder>` opens the repository the folder is in
+- [ ] `diffactive` alone opens the last repository, or an empty window offering to open one
+- [ ] A folder outside any repository offers to initialise one
+- [ ] Ctrl+O, or the repository's name in the bar, opens a repository
+- [ ] The open dialog lists recent repositories, newest first, without those that are gone
+- [ ] Typing a path completes folders, marking repositories; Tab completes, Enter opens
+- [ ] Switching repositories starts afresh, keeping Unified or Split
+- [ ] The bar names the repository `owner/project` after its remote, or its folder
+
 ## Reviews
 
 - [ ] Changes: everything not committed, new files included
@@ -77,3 +88,4 @@ Everything the app does, to try at your own pace. A tick means Peter tried it an
 - [ ] Next and previous file and hunk from the palette, showing their keys
 - [ ] The palette's highlighted command stands out, marked with ›
 - [ ] Switch to any other review from the palette
+- [ ] Open a repository from the palette

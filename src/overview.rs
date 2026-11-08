@@ -52,6 +52,8 @@ pub struct Overview {
     pub staged_lines: HashMap<String, LineCounts>,
     /// `None` when the current branch tracks nothing.
     pub upstream: Option<Upstream>,
+    /// `<user-or-org>/<project>`, from the remotes' URLs: `origin`'s first.
+    pub project: Option<String>,
 }
 
 impl Overview {
@@ -66,12 +68,36 @@ impl Overview {
             files: file_statuses(repo)?,
             staged_lines: staged_lines(repo)?,
             upstream: upstream(repo)?,
+            project: project(repo)?,
         })
     }
 
     pub fn staged_files(&self) -> usize {
         self.files.values().filter(|file| file.staged).count()
     }
+}
+
+/// The name the first remote URL that has one gives the project, trying `origin`'s first.
+fn project(repo: &Repo) -> Result<Option<String>> {
+    let urls = repo.run_accepting(&["config", "-z", "--get-regexp", r"^remote\..*\.url$"], &[0, 1])?;
+    let mut remotes: Vec<(&str, &str)> = urls.split_terminator('\0').filter_map(|entry| entry.split_once('\n')).collect();
+    remotes.sort_by_key(|(key, _)| *key != "remote.origin.url");
+    Ok(remotes.into_iter().find_map(|(_, url)| project_in(url)))
+}
+
+/// `<user-or-org>/<project>` from the last two parts of a remote's URL, unless it has no host,
+/// as a path on this machine doesn't.
+fn project_in(url: &str) -> Option<String> {
+    let path = match url.split_once("://") {
+        Some((_, rest)) => rest.split_once('/').filter(|(host, _)| !host.is_empty())?.1,
+        // `[user@]host:path`, as ssh takes it.
+        None => url.split_once(':').filter(|(host, _)| !host.is_empty() && !host.contains('/'))?.1,
+    };
+    let path = path.trim_end_matches('/');
+    let path = path.strip_suffix(".git").unwrap_or(path);
+    let mut parts = path.rsplit('/').filter(|part| !part.is_empty());
+    let (project, owner) = (parts.next()?, parts.next()?);
+    Some(format!("{owner}/{project}"))
 }
 
 fn head(repo: &Repo) -> Result<String> {
@@ -253,6 +279,29 @@ mod tests {
         fixture.git(&["checkout", "-q", "main"]);
 
         assert_eq!(Overview::load(&fixture.repo).unwrap().upstream, Some(Upstream { ahead: 2, behind: 1 }));
+    }
+
+    #[test]
+    fn names_the_project_after_a_remote_on_a_host_origin_first() {
+        let fixture = Fixture::new();
+        let project = || Overview::load(&fixture.repo).unwrap().project;
+        assert_eq!(project(), None);
+
+        fixture.git(&["remote", "add", "local", "/srv/git/thing.git"]);
+        assert_eq!(project(), None);
+        fixture.git(&["remote", "add", "fork", "git@github.com:someone/thing.git"]);
+        assert_eq!(project().as_deref(), Some("someone/thing"));
+        fixture.git(&["remote", "add", "origin", "https://codeberg.org/org/thing/"]);
+        assert_eq!(project().as_deref(), Some("org/thing"));
+    }
+
+    #[test]
+    fn a_project_is_the_last_two_parts_of_a_url_with_a_host() {
+        assert_eq!(project_in("ssh://git@host.example:2222/group/sub/repo.git").as_deref(), Some("sub/repo"));
+        assert_eq!(project_in("github.com:owner/repo").as_deref(), Some("owner/repo"));
+        assert_eq!(project_in("file:///srv/git/repo.git"), None);
+        assert_eq!(project_in("../repo"), None);
+        assert_eq!(project_in("https://host.example/repo"), None);
     }
 
     #[test]
