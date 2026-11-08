@@ -3,7 +3,7 @@
 use rune::{Cx, El, ScrollSpec, TextEdit, Tx, col, row, text};
 use rune::{Key, KeyEvent, Mods};
 use rune_kit::diff::{Annotation, DiffMode, DiffView};
-use rune_kit::{Badge, Button, ButtonVariant, ControlSize, Dialog, FileNode, Kit, RadioGroup, RadioItem, SegmentedControl, Spinner, TextArea, TextInput, Tree, TreeItem, TreeModel, TreeStyle, root};
+use rune_kit::{Badge, Button, ButtonVariant, ControlSize, Dialog, FileNode, Kit, RadioGroup, RadioItem, SegmentedControl, Spinner, TextArea, TextInput, Toast, ToastRegion, Tree, TreeItem, TreeModel, TreeStyle, root};
 
 use crate::action::{Action, Stashed};
 use crate::app::{Command, DRAFT_NOTE, Kind, State};
@@ -62,6 +62,7 @@ pub fn view(s: &State, cx: &mut Cx<State>) -> El {
     failure_dialog(s, &k, &mut overlays);
     palette_dialog(s, &k, &mut overlays);
     open_dialog(s, &k, &mut overlays);
+    outcome_toast(s, &k, &mut overlays);
     if !s.has_repository() {
         return root(col().fill(k.c.page).padding(SHEET_GAP).child(welcome(s, &k)), overlays);
     }
@@ -605,6 +606,13 @@ fn failure_dialog(s: &State, k: &Kit, overlays: &mut Vec<El>) {
     let output = col().key("git-output").w_full().max_h(FAILURE_MAX_HEIGHT).px(16.0).scroll(ScrollSpec { stick_bottom: false }).child(said);
     let buttons = row().w_full().padding(16.0).justify_end().child(Button::new("Close").variant(ButtonVariant::Ghost).on_press(State::dismiss_failure).build(k));
     Dialog::new("action-failure", format!("{} failed", failure.action)).width(FAILURE_WIDTH).fit().open(true).on_close(State::dismiss_failure).child(output).child(buttons).build(k, overlays);
+}
+
+/// What the last action did.
+fn outcome_toast(s: &State, k: &Kit, overlays: &mut Vec<El>) {
+    let Some(outcome) = s.outcome() else { return };
+    let toast = Toast::new("outcome", outcome).icon(k, k.glyph.check).on_close(State::dismiss_outcome).build(k);
+    overlays.push(ToastRegion::new().toast(toast).build(k));
 }
 
 fn palette_dialog(s: &State, k: &Kit, overlays: &mut Vec<El>) {

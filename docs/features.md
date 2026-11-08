@@ -80,6 +80,7 @@ Everything the app does, to try at your own pace. A tick means Peter tried it an
 - [ ] Push, publishing a new branch to `origin` (only tried against a local repository so far)
 - [ ] Pull and Push show how many commits there are to get or send
 - [ ] When git fails, its message shows in a dialog
+- [ ] A notice says what an operation did, for a few seconds: commit, stash, checkout, discard, pull, push and the rest, but not staging
 
 ## Commands
 

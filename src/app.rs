@@ -21,14 +21,46 @@ use crate::watch::RepoWatch;
 pub const DRAFT_NOTE: &str = "draft";
 /// How long the copy button says it copied.
 const COPIED_FOR: Duration = Duration::from_secs(2);
+/// How long what an action did shows.
+const OUTCOME_FOR: Duration = Duration::from_secs(3);
 
-/// Whether the copy button says it copied.
-enum CopiedNotice {
-    Hidden,
-    /// Copied just now; the next poll knows the time.
-    Started,
-    /// Showing until this clock time.
-    Until(f64),
+/// Something shown for a while. Its time runs from the first poll that sees it.
+struct Notice<T> {
+    lasts: Duration,
+    shown: Option<T>,
+    /// The clock time it hides at, once a poll has seen it.
+    until: Option<f64>,
+}
+
+impl<T> Notice<T> {
+    fn new(lasts: Duration) -> Notice<T> {
+        Notice { lasts, shown: None, until: None }
+    }
+
+    /// Shows `value`, for the full time again if something was showing.
+    fn show(&mut self, value: T) {
+        self.shown = Some(value);
+        self.until = None;
+    }
+
+    fn hide(&mut self) {
+        self.shown = None;
+        self.until = None;
+    }
+
+    /// Times it; returns whether it just ended.
+    fn step(&mut self, clock: f64, tx: &mut Tx) -> bool {
+        if self.shown.is_none() {
+            return false;
+        }
+        let until = *self.until.get_or_insert(clock + self.lasts.as_secs_f64());
+        if clock >= until {
+            self.hide();
+            return true;
+        }
+        tx.wake_after(Duration::from_secs_f64(until - clock));
+        false
+    }
 }
 
 /// The kinds of thing that can be reviewed.
@@ -191,7 +223,8 @@ pub struct State {
     shown: Option<Shown>,
     /// The comment to scroll to once its review is on screen.
     reveal: Option<u64>,
-    copied: CopiedNotice,
+    copied: Notice<()>,
+    outcome: Notice<String>,
     overview_load: Latest<Result<Overview>>,
     patch_load: Latest<Result<Loaded>>,
     action_load: Latest<(Action, Result<()>)>,
@@ -239,7 +272,8 @@ impl State {
             palette: None,
             shown: None,
             reveal: None,
-            copied: CopiedNotice::Hidden,
+            copied: Notice::new(COPIED_FOR),
+            outcome: Notice::new(OUTCOME_FOR),
             overview_load: Latest::default(),
             patch_load: Latest::default(),
             action_load: Latest::default(),
@@ -276,8 +310,7 @@ impl State {
         let comments = self.comments.poll();
         let action = self.action_load.take();
         let (repo_changed, watch_failure) = self.watch.as_ref().map_or((false, None), RepoWatch::take);
-        let copied_ended = self.step_copied_notice(clock, tx);
-        let landed = opened_failed || offer.is_some() || overview.is_some() || patch.is_some() || comments || action.is_some() || watch_failure.is_some() || copied_ended;
+        let landed = opened_failed || offer.is_some() || overview.is_some() || patch.is_some() || comments || action.is_some() || watch_failure.is_some();
         if let Some(offer) = offer {
             self.show_offer(offer);
         }
@@ -290,6 +323,9 @@ impl State {
         if let Some((action, result)) = action {
             self.finish_action(&action, result);
         }
+        // After the action, so what it did starts its time now.
+        let copied_ended = self.copied.step(clock, tx);
+        let outcome_ended = self.outcome.step(clock, tx);
         if let Some(overview) = overview {
             self.show_overview(overview);
         }
@@ -299,7 +335,7 @@ impl State {
         if let Some(patch) = patch {
             self.show_patch(patch, tx);
         }
-        landed
+        landed || copied_ended || outcome_ended
     }
 
     pub fn on_key(&mut self, event: &KeyEvent, tx: &mut Tx) -> bool {
@@ -572,11 +608,20 @@ impl State {
     /// Copies every open comment as a prompt for an agent.
     pub fn copy_prompt(&mut self, tx: &mut Tx) {
         tx.copy(prompt(&self.comments.open()));
-        self.copied = CopiedNotice::Started;
+        self.copied.show(());
     }
 
     pub fn just_copied(&self) -> bool {
-        !matches!(self.copied, CopiedNotice::Hidden)
+        self.copied.shown.is_some()
+    }
+
+    /// What the last action did, for a while after it finished.
+    pub fn outcome(&self) -> Option<&str> {
+        self.outcome.shown.as_deref()
+    }
+
+    pub fn dismiss_outcome(&mut self) {
+        self.outcome.hide();
     }
 
     /// Runs `action` in the background, unless one is running already.
@@ -845,8 +890,14 @@ impl State {
     fn finish_action(&mut self, action: &Action, result: Result<()>) {
         self.running = None;
         match result {
-            Ok(()) if matches!(action, Action::Commit(_)) => self.commit_text = TextEdit::default(),
-            Ok(()) => {}
+            Ok(()) => {
+                if matches!(action, Action::Commit(_) | Action::CommitAll(_)) {
+                    self.commit_text = TextEdit::default();
+                }
+                if let Some(outcome) = action.outcome() {
+                    self.outcome.show(outcome);
+                }
+            }
             Err(error) => self.action_failure = Some(ActionFailure { action: action.label(), message: error.to_string() }),
         }
         self.refresh();
@@ -974,22 +1025,6 @@ impl State {
             text.focused = false;
         }
         field(self).focused = true;
-    }
-
-    /// Times the copied notice; returns whether it just ended.
-    fn step_copied_notice(&mut self, clock: f64, tx: &mut Tx) -> bool {
-        let until = match self.copied {
-            CopiedNotice::Hidden => return false,
-            CopiedNotice::Started => clock + COPIED_FOR.as_secs_f64(),
-            CopiedNotice::Until(until) => until,
-        };
-        if clock >= until {
-            self.copied = CopiedNotice::Hidden;
-            return true;
-        }
-        self.copied = CopiedNotice::Until(until);
-        tx.wake_after(Duration::from_secs_f64(until - clock));
-        false
     }
 
     fn show_overview(&mut self, overview: Result<Overview>) {
@@ -1393,6 +1428,23 @@ mod tests {
 
         state.finish_action(&action, Ok(()));
         assert_eq!(state.commit_text.text, "");
+
+        state.commit_text = TextEdit::new("Take it all".to_owned());
+        state.finish_action(&Action::CommitAll("Take it all".into()), Ok(()));
+        assert_eq!(state.commit_text.text, "");
+    }
+
+    #[test]
+    fn a_finished_action_says_what_it_did_but_staging_says_nothing() {
+        let (_fixture, mut state) = state();
+        state.finish_action(&Action::Stage(vec!["a.txt".into()]), Ok(()));
+        assert_eq!(state.outcome(), None);
+
+        state.finish_action(&Action::Pull, Err(crate::git::GitError::new("no remote")));
+        assert_eq!(state.outcome(), None);
+
+        state.finish_action(&Action::Checkout("feature".into()), Ok(()));
+        assert_eq!(state.outcome(), Some("Switched to feature"));
     }
 
     #[test]

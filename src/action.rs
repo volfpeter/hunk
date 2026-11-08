@@ -61,6 +61,24 @@ impl Action {
         }
     }
 
+    /// What it did, for people, unless it only staged or unstaged files.
+    pub fn outcome(&self) -> Option<String> {
+        let said = match self {
+            Action::Stage(_) | Action::Unstage(_) | Action::StageAll | Action::UnstageAll => return None,
+            Action::DiscardChanges(_) | Action::DiscardUnstaged(_) => "Discarded changes",
+            Action::Commit(_) | Action::CommitAll(_) => "Committed",
+            Action::Checkout(branch) => return Some(format!("Switched to {branch}")),
+            Action::CreateBranch(name) => return Some(format!("Created and switched to {name}")),
+            Action::Stash { .. } => "Stashed",
+            Action::ApplyStash(_) => "Applied the stash",
+            Action::PopStash(_) => "Popped the stash",
+            Action::DropStash(_) => "Dropped the stash",
+            Action::Pull => "Pulled",
+            Action::Push => "Pushed",
+        };
+        Some(said.to_owned())
+    }
+
     pub fn run(&self, repo: &Repo) -> Result<()> {
         match self {
             Action::Stage(paths) => repo.run_on(&["add", "--all"], paths).map(drop),

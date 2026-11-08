@@ -84,7 +84,7 @@ To commit, press **Ctrl+Enter** or **Ctrl+Shift+C** (or run **Git: Commit** from
 
 **Pull** and **Push** sit in the bar, with arrows showing how many commits there are to get or send. **Ctrl+Shift+↓** pulls and **Ctrl+Shift+↑** pushes. A branch that was never pushed goes to `origin`.
 
-They use your own Git setup, but can't answer prompts: if Git needs a password it fails and shows you why. When anything fails, you see what Git said.
+They use your own Git setup, but can't answer prompts: if Git needs a password it fails and shows you why. When anything fails, you see what Git said. When it works, a notice in the bottom right says what happened, for a few seconds; staging and unstaging show in the lists instead.
 
 ## Commands
 
