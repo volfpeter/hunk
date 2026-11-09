@@ -41,6 +41,7 @@ Everything the app does, to try at your own pace. A tick means Peter tried it an
 - [ ] Comments follow their code as it moves
 - [ ] Comments whose code is gone show as outdated, and recover if it returns
 - [ ] Comments appear in any review containing their lines
+- [ ] Comment on unfolded lines, and opening a comment in a fold from Comments unfolds it
 - [ ] Comments tab lists everything, open first
 - [ ] Edit, delete, resolve and reopen, in the diff and from the Comments tab
 - [ ] Copy all open comments as one prompt

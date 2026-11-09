@@ -45,15 +45,13 @@ pub struct Anchor {
 }
 
 impl Anchor {
-    /// The lines of `range` on the side it started on, within the hunk it started in. A range
-    /// running into another hunk shrinks to its first line, since what lies between is unknown.
+    /// The lines of `range` on the side it started on. Without the file's whole text, a range
+    /// running out of its hunk shrinks to its first line, since what lies between is unknown.
     pub fn on_lines(file: &FileDiff, range: LineRange) -> Option<Anchor> {
         let side = range.start.side;
-        let position = |hunk: &Hunk, at: LineRef| hunk.lines.iter().position(|line| line.number(at.side) == Some(at.line));
-        let hunk = file.hunks.iter().find(|hunk| position(hunk, range.start).is_some())?;
-        let first = position(hunk, range.start)?;
-        let last = position(hunk, range.end).unwrap_or(first);
-        let numbered = numbered(&hunk.lines[first.min(last)..=first.max(last)], side);
+        let numbered = within_hunk(file, range)
+            .or_else(|| within_text(file, range))
+            .or_else(|| within_hunk(file, LineRange { end: range.start, ..range }))?;
         let path = match side {
             Side::Old => file.old_path.as_deref(),
             Side::New => file.new_path.as_deref(),
@@ -77,14 +75,19 @@ impl Anchor {
     }
 
     /// Where this shows in `files`: the file's index and the line it goes under, when they
-    /// hold its text.
+    /// hold its text. A whole file goes under the first line its hunks show.
     pub fn position(&self, files: &[FileDiff]) -> Option<(usize, LineRef)> {
         let index = files.iter().position(|file| file.path() == self.path || file.old_path.as_deref() == Some(&self.path))?;
-        let hunks = files[index].hunks.iter().map(|hunk| numbered(&hunk.lines, self.side));
+        let file = &files[index];
+        let hunks = file.hunks.iter().map(|hunk| numbered(&hunk.lines, self.side));
         let line = match &self.lines {
             None => hunks.flatten().next()?.0,
             Some(lines) => {
-                let start = hunks.filter_map(|hunk| nearest(&hunk, &lines.quoted, lines.start)).min_by_key(|start| start.abs_diff(lines.start))?;
+                let runs: Vec<_> = match file.text(self.side) {
+                    Some(text) => vec![numbered_text(text)],
+                    None => hunks.collect(),
+                };
+                let start = runs.iter().filter_map(|run| nearest(run, &lines.quoted, lines.start)).min_by_key(|start| start.abs_diff(lines.start))?;
                 start + lines.quoted.len() as u32 - 1
             }
         };
@@ -96,8 +99,7 @@ impl Anchor {
     pub fn follow(&mut self, contents: Option<&str>) -> bool {
         let Some(contents) = contents else { return false };
         let Some(lines) = &mut self.lines else { return true };
-        let numbered: Vec<(u32, &str)> = (1..).zip(contents.lines()).collect();
-        let Some(start) = nearest(&numbered, &lines.quoted, lines.start) else { return false };
+        let Some(start) = nearest(&numbered_text(contents), &lines.quoted, lines.start) else { return false };
         lines.start = start;
         lines.end = start + lines.quoted.len() as u32 - 1;
         true
@@ -116,6 +118,29 @@ impl Anchor {
 /// The lines of `lines` that exist on `side`, with their numbers.
 fn numbered(lines: &[Line], side: Side) -> Vec<(u32, &str)> {
     lines.iter().filter_map(|line| Some((line.number(side)?, line.text.as_str()))).collect()
+}
+
+/// The lines of `text`, numbered from 1.
+fn numbered_text(text: &str) -> Vec<(u32, &str)> {
+    (1..).zip(text.lines()).collect()
+}
+
+/// The lines of `range` on its start's side, when one hunk holds both its ends.
+fn within_hunk(file: &FileDiff, range: LineRange) -> Option<Vec<(u32, &str)>> {
+    let position = |hunk: &Hunk, at: LineRef| hunk.lines.iter().position(|line| line.number(at.side) == Some(at.line));
+    file.hunks.iter().find_map(|hunk| {
+        let (first, last) = (position(hunk, range.start)?, position(hunk, range.end)?);
+        Some(numbered(&hunk.lines[first.min(last)..=first.max(last)], range.start.side))
+    })
+}
+
+/// The lines of `range` in the whole text of its start's side, when the diff has it. A range
+/// ending on the other side, which numbers lines differently, shrinks to its first line.
+fn within_text(file: &FileDiff, range: LineRange) -> Option<Vec<(u32, &str)>> {
+    let side = range.start.side;
+    let end = if range.end.side == side { range.end.line } else { range.start.line };
+    let (first, last) = (range.start.line.min(end), range.start.line.max(end));
+    numbered_text(file.text(side)?).get(first.checked_sub(1)? as usize..last as usize).map(<[_]>::to_vec)
 }
 
 /// The first line of the run of `lines` matching `quoted` closest to line `near`.
@@ -436,6 +461,27 @@ mod tests {
     #[test]
     fn does_not_match_text_split_over_two_hunks() {
         assert_eq!(anchor(4, &["d", "x"]).position(&parse(PATCH)), None);
+    }
+
+    /// `f.txt`, twelve numbered lines with the second changed, folded so lines 6 to 12 are hidden.
+    fn folded() -> Vec<FileDiff> {
+        let lines: String = (1..=12).map(|n| if n == 2 { "-2\n+two\n".to_owned() } else { format!(" {n}\n") }).collect();
+        let files = crate::review::files(&format!("diff --git a/f.txt b/f.txt\n--- a/f.txt\n+++ b/f.txt\n@@ -1,12 +1,12 @@\n{lines}"));
+        assert_eq!(files[0].hunks.iter().map(|hunk| (hunk.new_start, hunk.new_count)).collect::<Vec<_>>(), [(1, 5)]);
+        files
+    }
+
+    #[test]
+    fn quotes_lines_outside_the_hunks_from_the_whole_text() {
+        let files = folded();
+        assert_eq!(Anchor::on_lines(&files[0], range(new_line(9), new_line(10))), Some(anchor(9, &["9", "10"])));
+        // From a change into the fold.
+        assert_eq!(Anchor::on_lines(&files[0], range(new_line(2), new_line(7))), Some(anchor(2, &["two", "3", "4", "5", "6", "7"])));
+    }
+
+    #[test]
+    fn shows_under_text_the_diff_folds_away() {
+        assert_eq!(anchor(9, &["9", "10"]).position(&folded()), Some((0, new_line(10))));
     }
 
     #[test]

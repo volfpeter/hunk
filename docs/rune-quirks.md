@@ -35,6 +35,7 @@ Check with a long string without spaces, in a narrow window.
 - `set_files` collapses folds and clears the selection.
 - Folds open only for a diff holding both whole texts. A parsed patch holds them only when git made it with full context and it went through `FileDiff::fold`.
 - Opening a fold only shows lines: hunks don't grow, so anything that looks for a line in the hunks misses the revealed ones.
+- `scroll_to_line` on a folded line opens its fold but lands short, leaving the line under the sticky file header. Once the fold is open, it lands right.
 - Rows are keyed by file position and line number, and scrolling holds on to a key. So files changing position move the reader to another file, and nothing public says which row is on top. The best we can do is put them back at the start of their file, with `visible_file` and `scroll_to_file`. Peter doesn't want a Rune issue for this while trying the library.
 
 ## Components

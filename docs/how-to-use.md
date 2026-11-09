@@ -53,7 +53,7 @@ A comment remembers the lines it was written on. Whenever the repository changes
 
 If the lines are gone, the comment is marked **outdated** rather than lost. It keeps showing the code it was written on, and recovers if that code comes back.
 
-A comment appears in any review that contains its lines, not only the one you wrote it in. An outdated comment has nowhere to sit in the diff, so opening it from **Comments** shows it above the diff.
+A comment appears in any review that contains its lines, not only the one you wrote it in. Lines in a fold count: the comment shows once the fold is open, and opening it from **Comments** opens the fold. You can comment on unfolded lines too. An outdated comment has nowhere to sit in the diff, so opening it from **Comments** shows it above the diff.
 
 ## Hand comments to an agent
 
