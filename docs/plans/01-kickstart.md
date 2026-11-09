@@ -134,7 +134,7 @@ Keep in mind:
 - A failed commit keeps its message today. The dialog must too, and a message shouldn't be lost by closing it.
 - Stash takes new files too today. The choices map to `git stash push`'s `--include-untracked` and `--staged` (git 2.35 and later), and the name to `-m`.
 
-Built: each tree's header holds the action matching its rows, Unstage all over the staged tree and Stage all over the unstaged one. Commit and Stash were there first, but didn't match the trees below them: they live in the palette now, and get keys in step 4h. Every row has Unstage or Stage, and a folder's acts on everything under it. The diff's order still comes from a tree of all its files, since the unstaged tree no longer holds them all in Changes. The staged tree marks nothing outside Changes, so it never looks like it moved the diff. Not handled: stashing tracked changes when only new files changed does nothing, silently, as git does.
+Built: each tree's header holds the action matching its rows, Unstage all over the staged tree and Stage all over the unstaged one. Commit and Stash were there first, but didn't match the trees below them: they live in the palette now, and get keys in step 4g. Every row has Unstage or Stage, and a folder's acts on everything under it. The diff's order still comes from a tree of all its files, since the unstaged tree no longer holds them all in Changes. The staged tree marks nothing outside Changes, so it never looks like it moved the diff. Not handled: stashing tracked changes when only new files changed does nothing, silently, as git does.
 
 Tasks:
 
@@ -172,7 +172,7 @@ Keep in mind:
 - **Fetch gets every remote and prunes**, so the switcher stops offering branches that were deleted on the remote. It fails on credentials the way pull does.
 - **The remotes dialog** lists each remote with its URL. It adds a remote from a name and a URL, with the name defaulting to `origin` when there is none. It removes a remote only after a confirm, because git drops that remote's branches with it. Push already sends a new branch to `origin`.
 
-Built: the branch name in the bar opens the switcher, and the Branches review lost its New branch button. A remote-only branch always checks out with `--track` and the full ref, so there is no guessing and no clash with a local branch named `<remote>/<branch>`. The switcher shows ten branches and how many more match, highlights the first match rather than the new branch, and offers no new branch for a name with spaces. The current branch is listed, and picking it only closes the switcher. Fetch and Remotes sit in the switcher's footer, since the bar already overflows (step 4g). Fetch is offered only with a remote. The Branches review selects the current branch when it opens, and moves to the branch switched to, from the app or a terminal. An empty name field means `origin` unless a remote has that name. Adding doesn't fetch. Not handled: a remote named with a leading `-` can be added, and then breaks fetching every remote.
+Built: the branch name in the bar opens the switcher, and the Branches review lost its New branch button. A remote-only branch always checks out with `--track` and the full ref, so there is no guessing and no clash with a local branch named `<remote>/<branch>`. The switcher shows ten branches and how many more match, highlights the first match rather than the new branch, and offers no new branch for a name with spaces. The current branch is listed, and picking it only closes the switcher. Fetch and Remotes sit in the switcher's footer, since the bar already overflows (step 4j). Fetch is offered only with a remote. The Branches review selects the current branch when it opens, and moves to the branch switched to, from the app or a terminal. An empty name field means `origin` unless a remote has that name. Adding doesn't fetch. Not handled: a remote named with a leading `-` can be added, and then breaks fetching every remote.
 
 Tasks:
 
@@ -203,7 +203,7 @@ Comments page:
 
 Unified or Split becomes one setting for every diff, kept across restarts. That is app state beside the recent repositories: update the invariant when it lands.
 
-Built: Comments is a page, not a review: the kind under it stays, so the button goes back to it. Copy all left the bar, for the page's header and the palette, as the bar overflows (step 4g) and the page shows what gets copied. Each entry's header holds its lines now, the review it was written in, its status, Copy and Show in diff, so the card under it drops its location and badge and keeps its actions beside its text. Show in diff is offered only while the review is on offer: a commit beyond the list, a dropped stash or a deleted branch has none. A snippet is three rows above and below the lines, a removed line counting as one, within one hunk unless the diff holds the whole text. A whole-file comment keeps the first seven lines of its first hunk, and its card goes under the last. A comment with neither a snippet nor lines, a whole-file one from before this, gets no entry and shows above the entries. Rune opens a snippet that doesn't start at line 1 with a gap row counting the lines before it (see `docs/rune-quirks.md`). The page rebuilds only when a comment comes, goes or changes status, and an entry keeps what the reader opened or closed while it stays resolved or open.
+Built: Comments is a page, not a review: the kind under it stays, so the button goes back to it. Copy all left the bar, for the page's header and the palette, as the bar overflows (step 4j) and the page shows what gets copied. Each entry's header holds its lines now, the review it was written in, its status, Copy and Show in diff, so the card under it drops its location and badge and keeps its actions beside its text. Show in diff is offered only while the review is on offer: a commit beyond the list, a dropped stash or a deleted branch has none. A snippet is three rows above and below the lines, a removed line counting as one, within one hunk unless the diff holds the whole text. A whole-file comment keeps the first seven lines of its first hunk, and its card goes under the last. A comment with neither a snippet nor lines, a whole-file one from before this, gets no entry and shows above the entries. Rune opens a snippet that doesn't start at line 1 with a gap row counting the lines before it (see `docs/rune-quirks.md`). The page rebuilds only when a comment comes, goes or changes status, and an entry keeps what the reader opened or closed while it stays resolved or open.
 
 Tasks:
 
@@ -225,7 +225,7 @@ Keep in mind:
 - **On GitHub, `gh` finds a branch's pull request**, with `--json` output and its own auth. That makes it a second spawned program, so it gets its own module, as git has.
 - **Forgejo and Gitea have no CLI with machine-readable output.** `fj` prints only for people and can't search by branch. Their HTTP API can (`/api/v1/repos/<owner>/<repo>/pulls`), but private repositories need a token. Decided: on Forgejo and Gitea the app only opens pull requests for now. Showing a branch's pull request there waits for an HTTP client and a token setting.
 
-Built: the pull request sits in the Branches review's header, beside Check out, for the selected branch: its number, title and status, or Create pull request. The repository is the one the bar names, `origin`'s first, as Push publishes there too. Branches go by their local names, and a base that is only on a remote loses its remote's prefix. A base of `HEAD` leaves the forge to pick its default branch. `gh` gets the repository explicitly (`--repo host/owner/repo`), so it never guesses or prompts, and the open pull request wins over newer closed ones; other repositories' branches of the same name don't count. The bar shows the current branch's pull request too, left of Commit: an icon and its number, the rest in the tooltip, and nothing when there is none, as the bar overflows (step 4g). The icon's shape says where the pull request stands, as GitHub's do: open, draft (its line dashed), merged, closed (its arrow crossed out). Shape rather than colour, since green and red mean added and removed lines here, and colour alone fails colour-blind readers. Only an open one is in full ink; a draft, merged or closed one is muted, as it asks for no attention.
+Built: the pull request sits in the Branches review's header, beside Check out, for the selected branch: its number, title and status, or Create pull request. The repository is the one the bar names, `origin`'s first, as Push publishes there too. Branches go by their local names, and a base that is only on a remote loses its remote's prefix. A base of `HEAD` leaves the forge to pick its default branch. `gh` gets the repository explicitly (`--repo host/owner/repo`), so it never guesses or prompts, and the open pull request wins over newer closed ones; other repositories' branches of the same name don't count. The bar shows the current branch's pull request too, left of Commit: an icon and its number, the rest in the tooltip, and nothing when there is none, as the bar overflows (step 4j). The icon's shape says where the pull request stands, as GitHub's do: open, draft (its line dashed), merged, closed (its arrow crossed out). Shape rather than colour, since green and red mean added and removed lines here, and colour alone fails colour-blind readers. Only an open one is in full ink; a draft, merged or closed one is muted, as it asks for no attention.
 
 That made the right of the bar uniform: every button is an icon, with a count when there is something to count, and its tooltip says what the count is. Comments and Commit lost their labels, reversing step 4e's decision to label Commit so it reads as the main action: its count now does that job, showing up exactly when something is ready to commit. Commit counts staged files only, not what a commit with nothing staged would take: that count would drop as files get staged, which looks broken while staging. With nothing staged it shows no count but still commits everything, and its dialog says so first. The bar now fits a window 900 points wide. Answers are kept by branch, and `gh` runs only for a branch not asked about yet, not on the watcher's refreshes, since agents' edits would call the API all day. The window regaining focus, Refresh from the palette and Fetch ask again for the current and the selected branch, keeping the old answers on screen meanwhile. Until `gh` answers, nothing shows on GitHub. When it can't look, Create pull request shows, its tooltip saying why. Not handled: a branch whose name differs on its remote, an ssh host alias (`git@github-work:`), which reads as Forgejo, and GitHub Enterprise.
 
@@ -234,23 +234,9 @@ Tasks:
 - [x] Open a pull request for a branch, in the browser
 - [x] Show a branch's pull request on GitHub, and open it in the browser
 
-### Step 4g: UI refinements
+### Step 4g: Hotkeys
 
-Peter dislikes the always-visible top panel. A left sidebar is doubtful too, because side-by-side diffs need the width, so moving the panel to the side is unlikely to be the fix. lazygit's layout is not a reference.
-
-The panel's trouble was a lack of purpose, filled with whatever needed a place, and weak separation from the diff. Step 4b gives it a purpose in Changes and Staging, the staged and unstaged trees, so the fix may be its design rather than its removal.
-
-A first step is done: the panel and the diff are sheets on a darker page, and the diff has a status row of its own, with the summary and Unified/Split. Still open: collapsing the panel, to one line saying what is under review rather than to nothing, with a key.
-
-Tasks:
-
-- [ ] Rework the top panel: a clear purpose in every review, and clear separation from the diff (the bar also overflows narrow windows, which hides Pull and Push; step 4f's icons and counts made it fit 900 points)
-- [ ] Stop new files wasting half of the split view (may need a Rune issue)
-- [ ] Decide what picking the default branch should show (it's empty today)
-
-### Step 4h: Hotkeys
-
-Hotkeys go in once the layout settles, so they're assigned once. Give the frequent actions a key, then add an overlay that lists every key, grouped as the palette groups its commands.
+Hotkeys go in before the layout is reworked, so the keys are assigned once and the rework can place their hints. Give the frequent actions a key. Step 4h adds an overlay listing them.
 
 Decided, so a new key can be guessed from its kind:
 
@@ -274,7 +260,53 @@ Tasks:
 - [x] Keys for commit, stash, pull and push
 - [x] Commit everything when nothing is staged, with the dialog summarising what the commit takes
 - [ ] `s` / `u` stage and unstage the focused item: a row in either file tree, else the diff's file
-- [ ] Overlay listing every key
+
+### Step 4h: Hotkey overlay
+
+Lists every key, grouped as the palette groups its commands, so keys can be found without remembering them.
+
+- **Ctrl+H opens it**, a picker-kind key by the rules above. The icon sits at the far right of the bar, with a tooltip showing the key.
+- **Same topics, same order as the palette**, with Ctrl+K (open the palette) as the first line above them. Built from the palette's commands, so a command that gains a key, or a new command from step 4i, shows up without touching the overlay. Commands without a key are left out.
+- It lists keys, it doesn't run anything. Keys Rune provides itself (text fields, lists and the like) are left out. Our own bare keys that the palette doesn't hold, like `s` / `u`, need a place in the same list.
+
+Tasks:
+
+- [ ] Overlay listing every key, on Ctrl+H and from a question-mark icon at the right of the bar
+
+### Step 4i: More git operations
+
+Common operations still missing, found by asking what a reviewer does after the review: fold in another branch, undo a commit, throw work away. Same rules as step 3: file-level, visible controls where they have a place, the palette as shortcut, confirm anything destructive, and show git's error. Keys follow step 4g's rules, and the overlay picks them up from the palette.
+
+Keep in mind:
+
+- **Merge and rebase take a branch, the current one onto or with another.** A right-click menu on a branch in the Branches review is the natural home, beside Check out: "Merge into current", "Rebase current onto this". The palette offers them through the branch picker. Conflicts are not resolved in the app: stop and say so, and offer Abort (`merge --abort`, `rebase --abort`). The app must show a merge or rebase in progress, and a refresh must not hide it.
+- **Rebase rewrites history.** Confirm it, and say when the branch is already pushed.
+- **Discard everything** from the palette, meaning what the review shows (step 3): back to `HEAD` in Changes, to the staged version in Staging. New files are included only after the confirm says how many go. It is the most destructive command in the app, so no key.
+- **Undo the last commit, keeping its changes staged** (`reset --soft HEAD~1`). Offered only when the commit has no merge parent and, if it was pushed, with a warning. The commit message should come back into the next commit dialog, as it is half the work.
+- Candidates, to be cut or confirmed with Peter before building: amend the last commit, cherry-pick or revert a commit (from the Commits review's context menu), delete a branch (local, and the remote's), rename a branch, reset a branch to a commit, set an upstream. Skip the ones that don't hurt yet.
+
+Tasks:
+
+- [ ] Merge a branch into the current one, and abort a merge
+- [ ] Rebase the current branch onto another, and abort a rebase
+- [ ] Show a merge or rebase in progress, with its conflicted files
+- [ ] Discard everything, from the palette, after a confirm
+- [ ] Undo the last commit, leaving its changes staged
+- [ ] Decide which of the candidates are worth building
+
+### Step 4j: UI refinements
+
+Peter dislikes the always-visible top panel. A left sidebar is doubtful too, because side-by-side diffs need the width, so moving the panel to the side is unlikely to be the fix. lazygit's layout is not a reference.
+
+The panel's trouble was a lack of purpose, filled with whatever needed a place, and weak separation from the diff. Step 4b gives it a purpose in Changes and Staging, the staged and unstaged trees, so the fix may be its design rather than its removal.
+
+A first step is done: the panel and the diff are sheets on a darker page, and the diff has a status row of its own, with the summary and Unified/Split. Still open: collapsing the panel, to one line saying what is under review rather than to nothing, with a key.
+
+Tasks:
+
+- [ ] Rework the top panel: a clear purpose in every review, and clear separation from the diff (the bar also overflows narrow windows, which hides Pull and Push; step 4f's icons and counts made it fit 900 points)
+- [ ] Stop new files wasting half of the split view (may need a Rune issue)
+- [ ] Decide what picking the default branch should show (it's empty today)
 
 ### Step 5: File explorer
 
