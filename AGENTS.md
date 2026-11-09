@@ -10,7 +10,7 @@ Kickstart Plan and task list: `docs/plans/01-kickstart.md`. Read it before start
 - Simple and intuitive beats dense. Major actions get a visible control where they have a good place; the rest can live in menus and the palette. lazygit is only a bucket of features, most of which we do not want: never copy its layout or key-driven handling.
 - Keep the width for the diff: side-by-side needs it. Lists sit above the diff, not beside it.
 - Start simple. Skip uncommon cases until they hurt; iterate from something that runs. Product scope stays small, code quality does not.
-- Stack stays simple: built-in Rune components and syntax highlighting, no extra frameworks.
+- Decisions in these docs and the plans are the best answer so far, not a spec. Use the best tool for what we need: Rune's components first, and a new dependency when it earns its place, with the reason recorded where the decision lives.
 
 ## Workflow
 
