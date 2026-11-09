@@ -4,10 +4,13 @@ mod action;
 mod app;
 mod comments;
 mod git;
+mod kept;
 mod open;
 mod overview;
 mod recent;
 mod review;
+mod settings;
+mod snippet;
 mod switcher;
 mod view;
 mod watch;
@@ -20,6 +23,7 @@ use rune::{App, AppSpec};
 use app::{Shell, State};
 use open::Opened;
 use recent::Recents;
+use settings::Settings;
 
 const NAME: &str = "diffactive";
 const WINDOW_SIZE: (f32, f32) = (1500.0, 950.0);
@@ -49,7 +53,7 @@ fn main() -> ExitCode {
         families: ("Inter", "ui-monospace, Inter"),
         ..AppSpec::new(NAME, WINDOW_SIZE, || unreachable!("App::init builds the state"), view::view)
     };
-    let shell = Shell::new(recents);
+    let shell = Shell::new(recents, Settings::load());
     App::new(spec).init(move || State::new(opened, shell)).modifier_keys().run();
     ExitCode::SUCCESS
 }

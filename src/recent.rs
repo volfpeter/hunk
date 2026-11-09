@@ -1,10 +1,10 @@
 //! The repositories opened lately, kept in the app's own state folder.
 
-use std::fs;
 use std::path::{Path, PathBuf};
-use std::thread;
 
 use serde::{Deserialize, Serialize};
+
+use crate::kept;
 
 const FILE_NAME: &str = "recent.json";
 const VERSION: u32 = 1;
@@ -30,7 +30,7 @@ impl Recents {
     /// Reads the ones kept in the app's state folder, or its data folder where there is no such
     /// thing. A file that can't be read counts as none.
     pub fn load() -> Recents {
-        let file = dirs::state_dir().or_else(dirs::data_dir).map(|dir| dir.join(crate::NAME).join(FILE_NAME));
+        let file = kept::path(FILE_NAME);
         Recents { roots: file.as_deref().map(read_file).unwrap_or_default(), file }
     }
 
@@ -56,31 +56,15 @@ impl Recents {
     }
 
     fn save(&self) {
-        let Some(file) = self.file.clone() else { return };
-        let repositories = self.roots.clone();
-        thread::spawn(move || {
-            // Losing the list costs little, so a failure only says so.
-            if let Err(error) = write_file(&file, repositories) {
-                eprintln!("{}: {}: {error}", crate::NAME, file.display());
-            }
-        });
+        if let Some(file) = self.file.clone() {
+            kept::save(file, StoreFile { version: VERSION, repositories: self.roots.clone() });
+        }
     }
 }
 
 fn read_file(file: &Path) -> Vec<PathBuf> {
-    let stored = fs::read_to_string(file).ok().and_then(|text| serde_json::from_str::<StoreFile>(&text).ok());
+    let stored = kept::read::<StoreFile>(file);
     stored.filter(|stored| stored.version == VERSION).map(|stored| stored.repositories).unwrap_or_default()
-}
-
-/// Replaces `file` in one step, so a crash leaves the old list or the new, never half.
-fn write_file(file: &Path, repositories: Vec<PathBuf>) -> std::io::Result<()> {
-    let text = serde_json::to_string_pretty(&StoreFile { version: VERSION, repositories })?;
-    let partial = file.with_extension("json.tmp");
-    if let Some(parent) = file.parent() {
-        fs::create_dir_all(parent)?;
-    }
-    fs::write(&partial, text)?;
-    fs::rename(&partial, file)
 }
 
 #[cfg(test)]
@@ -107,7 +91,7 @@ mod tests {
         let file = dir.path().join(crate::NAME).join(FILE_NAME);
         assert!(read_file(&file).is_empty());
 
-        write_file(&file, vec![PathBuf::from("/a")]).unwrap();
+        kept::write(&file, &StoreFile { version: VERSION, repositories: vec![PathBuf::from("/a")] }).unwrap();
         assert_eq!(read_file(&file), [PathBuf::from("/a")]);
     }
 }

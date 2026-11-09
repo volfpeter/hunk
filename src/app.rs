@@ -1,11 +1,12 @@
 //! The app's state and what changes it.
 
+use std::collections::HashMap;
 use std::mem;
 use std::path::PathBuf;
 use std::time::Duration;
 
 use rune::{Key, KeyEvent, Latest, TextEdit, Tx, Waker};
-use rune_kit::diff::{Annotation, DiffMode, DiffState, FileDiff, LineRange};
+use rune_kit::diff::{Annotation, DiffMode, DiffState, FileDiff, LineRange, LineRef};
 use rune_kit::{FileNode, FileTree, TreeModel};
 
 use crate::action::{Action, Stashed};
@@ -15,6 +16,8 @@ use crate::open::{Choice, Offer, Opened, resolve};
 use crate::overview::{Entry, FileStatus, LineCounts, Overview};
 use crate::recent::Recents;
 use crate::review::{Loaded, Review, files};
+use crate::settings::Settings;
+use crate::snippet::Snippet;
 use crate::switcher::{BranchChoice, BranchOffer};
 use crate::watch::RepoWatch;
 
@@ -67,31 +70,31 @@ impl<T> Notice<T> {
 /// The kinds of thing that can be reviewed.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Kind {
-    Changes,
     Staging,
-    Commits,
+    Changes,
     Branches,
+    Commits,
     Stashes,
-    Comments,
 }
 
 impl Kind {
-    pub const ALL: [Kind; 6] = [Kind::Changes, Kind::Staging, Kind::Commits, Kind::Branches, Kind::Stashes, Kind::Comments];
+    /// By reach: staging is part of the changes, which are part of the branch. Commits split
+    /// the branch up, and stashes sit beside it.
+    pub const ALL: [Kind; 5] = [Kind::Staging, Kind::Changes, Kind::Branches, Kind::Commits, Kind::Stashes];
 
     pub fn label(self) -> &'static str {
         match self {
-            Kind::Changes => "Changes",
             Kind::Staging => "Staging",
-            Kind::Commits => "Commits",
+            Kind::Changes => "Changes",
             Kind::Branches => "Branches",
+            Kind::Commits => "Commits",
             Kind::Stashes => "Stashes",
-            Kind::Comments => "Comments",
         }
     }
 
     /// Whether reviewing this kind means picking one from a list.
     pub fn has_list(self) -> bool {
-        matches!(self, Kind::Commits | Kind::Branches | Kind::Stashes | Kind::Comments)
+        matches!(self, Kind::Commits | Kind::Branches | Kind::Stashes)
     }
 }
 
@@ -137,10 +140,10 @@ impl Command {
     }
 }
 
-const COMMIT: &str = "Ctrl+Enter";
+pub const COMMIT: &str = "Ctrl+Enter";
 const STASH: &str = "Ctrl+Shift+S";
-const PULL: &str = "Ctrl+Shift+↓";
-const PUSH: &str = "Ctrl+Shift+↑";
+pub const PULL: &str = "Ctrl+Shift+↓";
+pub const PUSH: &str = "Ctrl+Shift+↑";
 const FETCH: &str = "Ctrl+Shift+F";
 
 /// The shortcut of the git command `event` runs. Git commands go on Ctrl+Shift, and Commit on
@@ -163,6 +166,7 @@ fn git_shortcut(event: &KeyEvent) -> Option<&'static str> {
 pub struct Shell {
     waker: Option<Waker>,
     pub recents: Recents,
+    pub settings: Settings,
     pub open_text: TextEdit,
     /// The highlighted row of the open dialog, while it is open.
     pub opener: Option<usize>,
@@ -173,8 +177,8 @@ pub struct Shell {
 }
 
 impl Shell {
-    pub fn new(recents: Recents) -> Shell {
-        Shell { recents, ..Shell::default() }
+    pub fn new(recents: Recents, settings: Settings) -> Shell {
+        Shell { recents, settings, ..Shell::default() }
     }
 }
 
@@ -184,7 +188,10 @@ pub struct State {
     repo: Option<Repo>,
     /// A folder opened outside any repository, which can be made one.
     pub not_repository: Option<PathBuf>,
+    /// The review on screen, or to go back to from the comments page.
     pub kind: Kind,
+    /// Whether every comment is on screen, in place of the review.
+    pub showing_comments: bool,
     pub overview: Overview,
     /// The commits, branches or stashes on offer.
     pub list: TreeModel<Entry>,
@@ -196,6 +203,15 @@ pub struct State {
     pub diff: DiffState,
     pub error: Option<String>,
     pub comments: Comments,
+    /// The comments page: an entry for every comment with something to show, each with the
+    /// snippet it was written on.
+    pub comment_sheet: DiffState,
+    /// The comment of each entry of the comments page, and whether it was resolved.
+    sheet: Vec<(u64, bool)>,
+    /// Every comment and its status, as the comments page was last filled.
+    sheet_listing: Vec<(u64, Option<&'static str>)>,
+    /// The comment opened from the comments page, shown in its review even when resolved.
+    shown_comment: Option<u64>,
     /// What the comment being written is about.
     pub draft: Option<Anchor>,
     pub draft_text: TextEdit,
@@ -230,7 +246,8 @@ pub struct State {
     shown: Option<Shown>,
     /// The comment to scroll to once its review is on screen.
     reveal: Option<u64>,
-    copied: Notice<()>,
+    /// What was copied: one comment, or `None` for every open one.
+    copied: Notice<Option<u64>>,
     outcome: Notice<String>,
     overview_load: Latest<Result<Overview>>,
     patch_load: Latest<Result<Loaded>>,
@@ -242,17 +259,20 @@ pub struct State {
 impl State {
     /// A window on what `opened` found, if anything.
     pub fn new(opened: Option<Opened>, shell: Shell) -> State {
-        let mut diff = DiffState::default();
-        diff.set_mode(DiffMode::Split);
+        let layout = shell.settings.layout();
+        let (mut diff, mut comment_sheet) = (DiffState::default(), DiffState::default());
+        diff.set_mode(layout);
+        comment_sheet.set_mode(layout);
         let (repo, comments, not_repository) = match opened {
             Some(Opened::Repository(repo, comments)) => (Some(repo), comments, None),
             Some(Opened::Folder(folder)) => (None, Comments::default(), Some(folder)),
             None => (None, Comments::default(), None),
         };
-        State {
+        let mut state = State {
             repo,
             not_repository,
-            kind: Kind::Changes,
+            kind: Kind::Staging,
+            showing_comments: false,
             overview: Overview::default(),
             list: TreeModel::new().key("list"),
             files: TreeModel::new().key("files"),
@@ -260,6 +280,10 @@ impl State {
             diff,
             error: None,
             comments,
+            comment_sheet,
+            sheet: Vec::new(),
+            sheet_listing: Vec::new(),
+            shown_comment: None,
             draft: None,
             draft_text: TextEdit::default(),
             editing: None,
@@ -289,7 +313,9 @@ impl State {
             action_load: Latest::default(),
             watch: None,
             shell,
-        }
+        };
+        state.rebuild_sheet();
+        state
     }
 
     pub fn setup(&mut self, waker: Waker) {
@@ -374,7 +400,12 @@ impl State {
             }
             return true;
         }
-        self.diff.key(event, tx)
+        self.active_diff().key(event, tx)
+    }
+
+    /// The diff on screen: the review's, or the comments page.
+    fn active_diff(&mut self) -> &mut DiffState {
+        if self.showing_comments { &mut self.comment_sheet } else { &mut self.diff }
     }
 
     /// Runs the command whose key is `shortcut`, if it is on offer.
@@ -471,16 +502,66 @@ impl State {
     }
 
     pub fn select_kind(&mut self, kind: Kind) {
+        self.showing_comments = false;
         self.kind = kind;
         self.list.clear_selection();
         self.rebuild_list();
         self.show_selected();
     }
 
-    /// Shows the entry just selected in the list, and the comment if it is one.
+    /// Shows the entry just selected in the list.
     pub fn show_selected(&mut self) {
-        self.reveal = self.selected_comment().map(|comment| comment.id);
+        self.shown_comment = None;
+        self.place_annotations();
         self.load_review();
+    }
+
+    /// Shows every comment in place of the review, or the review again.
+    pub fn toggle_comments(&mut self) {
+        self.showing_comments = !self.showing_comments;
+    }
+
+    /// Where the review a comment was written in shows: its kind, and its entry in the list
+    /// when the kind has one. `None` when the review is no longer on offer.
+    pub fn review_place(&self, review: &Review) -> Option<(Kind, Option<String>)> {
+        let listed = |entries: &[Entry], id: &str| entries.iter().any(|entry| entry.id == id).then(|| Some(id.to_owned()));
+        match review {
+            Review::Changes => Some((Kind::Changes, None)),
+            Review::Unstaged => Some((Kind::Staging, None)),
+            Review::Commit(commit) => Some((Kind::Commits, listed(&self.overview.commits, commit)?)),
+            Review::Branch { branch, .. } => Some((Kind::Branches, listed(&self.overview.branches, branch)?)),
+            Review::Stash(stash) => Some((Kind::Stashes, listed(&self.overview.stashes, stash)?)),
+        }
+    }
+
+    /// Opens the review the comment `id` was written in, at the comment.
+    pub fn show_in_diff(&mut self, id: u64) {
+        let Some((kind, entry)) = self.comments.get(id).and_then(|comment| self.review_place(&comment.review)) else { return };
+        self.select_kind(kind);
+        if let Some(entry) = entry {
+            self.list.select(&entry);
+        }
+        self.shown_comment = Some(id);
+        self.reveal = Some(id);
+        self.place_annotations();
+        self.load_review();
+    }
+
+    /// Lays out every diff as `layout`, from now on.
+    pub fn set_layout(&mut self, layout: DiffMode) {
+        self.diff.set_mode(layout);
+        self.comment_sheet.set_mode(layout);
+        self.shell.settings.set_layout(layout);
+    }
+
+    /// The comment of the entry `file` of the comments page.
+    pub fn sheet_comment(&self, file: usize) -> Option<&Comment> {
+        self.sheet.get(file).and_then(|(id, _)| self.comments.get(*id))
+    }
+
+    /// The comments the comments page has no entry for, having nothing to show of their code.
+    pub fn comments_off_sheet(&self) -> Vec<&Comment> {
+        self.comments.listed().into_iter().filter(|comment| !self.sheet.iter().any(|(id, _)| *id == comment.id)).collect()
     }
 
     /// Shows the entry selected in the list. A branch picked from the list is compared with the
@@ -511,21 +592,15 @@ impl State {
             Kind::Commits => selected().map(Review::Commit),
             Kind::Branches => selected().map(|branch| Review::Branch { base: self.overview.base.clone(), branch }),
             Kind::Stashes => selected().map(Review::Stash),
-            Kind::Comments => self.selected_comment().map(|comment| comment.review.clone()),
         }
     }
 
-    /// The comment selected in the list, when the list holds comments.
-    pub fn selected_comment(&self) -> Option<&Comment> {
-        let id = self.list.selected().next().filter(|_| self.kind == Kind::Comments)?;
-        self.comments.get(id.parse().ok()?)
-    }
-
-    /// The selected comment or the one being reworded, when the diff on screen has nowhere to
-    /// show it.
+    /// The comment opened from the comments page or the one being reworded, when the diff on
+    /// screen has nowhere to show it.
     pub fn unplaced_comment(&self) -> Option<&Comment> {
+        let shown = self.shown_comment.and_then(|id| self.comments.get(id));
         let editing = self.editing.and_then(|id| self.comments.get(id));
-        self.selected_comment().or(editing).filter(|comment| comment.anchor.position(self.diff.files()).is_none())
+        shown.or(editing).filter(|comment| comment.anchor.position(self.diff.files()).is_none())
     }
 
     /// Whether the comment being written has lost its place in the diff on screen.
@@ -554,7 +629,9 @@ impl State {
             return;
         }
         if let (Some(anchor), Some(shown)) = (self.draft.clone(), &self.shown) {
-            self.comments.add(anchor, shown.review.clone(), shown.commit.clone(), body);
+            let files = self.diff.files();
+            let snippet = anchor.position(files).and_then(|(file, _)| Snippet::new(&files[file], &anchor));
+            self.comments.add(anchor, shown.review.clone(), shown.commit.clone(), snippet, body);
             self.diff.set_selection(None);
             self.cancel_draft();
         }
@@ -586,13 +663,6 @@ impl State {
         self.edit_text = TextEdit::new(comment.body.clone());
         self.focus(|s| &mut s.edit_text);
         self.editing = Some(id);
-    }
-
-    /// Opens the selected comment's wording for editing and brings it into view.
-    pub fn edit_selected(&mut self, tx: &mut Tx) {
-        let Some((id, anchor)) = self.selected_comment().map(|comment| (comment.id, comment.anchor.clone())) else { return };
-        self.start_edit(id);
-        self.scroll_to_anchor(&anchor, tx);
     }
 
     /// Keeps the new wording.
@@ -628,14 +698,27 @@ impl State {
         self.deleting = None;
     }
 
-    /// Copies every open comment as a prompt for an agent.
-    pub fn copy_prompt(&mut self, tx: &mut Tx) {
-        tx.copy(prompt(&self.comments.open()));
-        self.copied.show(());
+    /// The open comments whose code is still there, which copying them all takes.
+    pub fn comments_to_copy(&self) -> Vec<&Comment> {
+        self.comments.open().into_iter().filter(|comment| !comment.outdated).collect()
     }
 
-    pub fn just_copied(&self) -> bool {
-        self.copied.shown.is_some()
+    /// Copies every open comment whose code is still there as a prompt for an agent.
+    pub fn copy_open_comments(&mut self, tx: &mut Tx) {
+        tx.copy(prompt(&self.comments_to_copy()));
+        self.copied.show(None);
+    }
+
+    /// Copies the comment `id` as a prompt for an agent, whatever its status.
+    pub fn copy_comment(&mut self, id: u64, tx: &mut Tx) {
+        let Some(comment) = self.comments.get(id) else { return };
+        tx.copy(prompt(&[comment]));
+        self.copied.show(Some(id));
+    }
+
+    /// Whether the comment `id`, or every open one for `None`, was just copied.
+    pub fn just_copied(&self, which: Option<u64>) -> bool {
+        self.copied.shown == Some(which)
     }
 
     /// What the last action did, for a while after it finished.
@@ -1018,13 +1101,16 @@ impl State {
             }
         };
         let idle = self.running.is_none();
-        let file = self.diff.visible_file();
-        let files = self.diff.files().len();
-        let name = self.diff.files().get(file).and_then(|diff| diff.path().rsplit('/').next()).unwrap_or_default();
+        let diff = if self.showing_comments { &self.comment_sheet } else { &self.diff };
+        let file = diff.visible_file();
+        let files = diff.files().len();
 
-        offer(idle && !self.stageable(file).is_empty(), Command::new("File", format!("Stage {name}"), |s, _| s.stage_file(s.diff.visible_file())));
-        offer(idle && !self.unstageable(file).is_empty(), Command::new("File", format!("Unstage {name}"), |s, _| s.unstage_file(s.diff.visible_file())));
-        offer(idle && !self.discardable(file).is_empty(), Command::new("File", format!("Discard {name}"), |s, _| s.ask_to_discard(s.diff.visible_file())));
+        if !self.showing_comments {
+            let name = self.diff.files().get(file).and_then(|diff| diff.path().rsplit('/').next()).unwrap_or_default();
+            offer(idle && !self.stageable(file).is_empty(), Command::new("File", format!("Stage {name}"), |s, _| s.stage_file(s.diff.visible_file())));
+            offer(idle && !self.unstageable(file).is_empty(), Command::new("File", format!("Unstage {name}"), |s, _| s.unstage_file(s.diff.visible_file())));
+            offer(idle && !self.discardable(file).is_empty(), Command::new("File", format!("Discard {name}"), |s, _| s.ask_to_discard(s.diff.visible_file())));
+        }
 
         type Step = fn(&mut DiffState, bool, &mut Tx) -> bool;
         let moves: [(bool, &str, &'static str, Step, bool); 4] = [
@@ -1034,11 +1120,11 @@ impl State {
             (files > 0, "Previous hunk", "k", DiffState::next_hunk, false),
         ];
         for (available, label, key, step, forward) in moves {
-            offer(available, Command::new("Go to", label, move |s, tx| _ = step(&mut s.diff, forward, tx)).shortcut(key));
+            offer(available, Command::new("Go to", label, move |s, tx| _ = step(s.active_diff(), forward, tx)).shortcut(key));
         }
 
         for kind in Kind::ALL {
-            offer(kind != self.kind, Command::new("Review", kind.label(), move |s, _| s.select_kind(kind)));
+            offer(self.showing_comments || kind != self.kind, Command::new("Review", kind.label(), move |s, _| s.select_kind(kind)));
         }
 
         offer(self.can_stage_all(), Command::new("Git", "Stage all", |s, _| s.run(Action::StageAll)));
@@ -1060,7 +1146,9 @@ impl State {
         offer(true, Command::new("Git", "Remotes", |s, _| s.open_remotes()));
         offer(true, Command::new("Git", "Refresh", |s, _| s.refresh()));
 
-        offer(!self.comments.open().is_empty(), Command::new("Comments", "Copy prompt", State::copy_prompt));
+        offer(!self.showing_comments, Command::new("Comments", "Show all", |s, _| s.toggle_comments()));
+        let to_copy = self.comments_to_copy().len();
+        offer(to_copy > 0, Command::new("Comments", copy_label(to_copy), State::copy_open_comments));
         offer(self.can_open(), open);
         commands
     }
@@ -1103,12 +1191,9 @@ impl State {
         self.refresh();
     }
 
-    /// Puts what `opened` found in place of the repository on screen, starting afresh but for the
-    /// diff's layout.
+    /// Puts what `opened` found in place of the repository on screen, starting afresh.
     fn show_opened(&mut self, opened: Opened) {
-        let mode = self.diff.mode();
         *self = State::new(Some(opened), mem::take(&mut self.shell));
-        self.diff.set_mode(mode);
         self.start();
     }
 
@@ -1190,22 +1275,40 @@ impl State {
     /// Brings what shows comments up to date with them.
     fn comments_changed(&mut self) {
         self.place_annotations();
-        if self.kind == Kind::Comments {
-            let selected = self.list.selected().next().map(str::to_owned);
-            self.rebuild_list();
-            if self.list.selected().next().map(str::to_owned) != selected {
-                self.show_selected();
-            }
-        }
+        self.rebuild_sheet();
     }
 
-    /// Puts each open comment, the selected comment and the draft under their lines in the diff
-    /// on screen.
+    /// Fills the comments page with an entry for every comment with a snippet, in listing order,
+    /// once the listing changed. An entry keeps what the reader opened or closed while the
+    /// comment stays resolved or not; a resolved one starts closed.
+    fn rebuild_sheet(&mut self) {
+        let listed = self.comments.listed();
+        let listing: Vec<(u64, Option<&'static str>)> = listed.iter().map(|comment| (comment.id, comment.status())).collect();
+        if listing == self.sheet_listing {
+            return;
+        }
+        let collapsed: HashMap<(u64, bool), bool> = self.sheet.iter().enumerate().map(|(file, entry)| (*entry, self.comment_sheet.collapsed(file))).collect();
+        let entries: Vec<(&Comment, FileDiff, Snippet)> = listed.into_iter().filter_map(|comment| {
+            let snippet = comment.snippet()?;
+            Some((comment, snippet.file()?, snippet))
+        }).collect();
+        self.sheet = entries.iter().map(|(comment, ..)| (comment.id, comment.resolved)).collect();
+        let notes = entries.iter().enumerate().map(|(file, (comment, _, snippet))| Annotation::new(file, LineRef::new(comment.anchor.side, snippet.line), comment.id.to_string())).collect();
+        self.comment_sheet.set_files(entries.into_iter().map(|(_, file, _)| file).collect());
+        self.comment_sheet.set_annotations(notes);
+        for (file, entry) in self.sheet.iter().enumerate() {
+            self.comment_sheet.set_collapsed(file, collapsed.get(entry).copied().unwrap_or(entry.1));
+        }
+        self.sheet_listing = listing;
+    }
+
+    /// Puts each open comment, the one opened from the comments page and the draft under their
+    /// lines in the diff on screen.
     fn place_annotations(&mut self) {
-        let selected_resolved = self.selected_comment().filter(|comment| comment.resolved);
+        let shown_resolved = self.shown_comment.and_then(|id| self.comments.get(id)).filter(|comment| comment.resolved);
         let files = self.diff.files();
         let note = |anchor: &Anchor, id: String| anchor.position(files).map(|(file, at)| Annotation::new(file, at, id));
-        let comments = self.comments.open().into_iter().chain(selected_resolved).filter_map(|comment| note(&comment.anchor, comment.id.to_string()));
+        let comments = self.comments.open().into_iter().chain(shown_resolved).filter_map(|comment| note(&comment.anchor, comment.id.to_string()));
         let draft = self.draft.as_ref().and_then(|anchor| note(anchor, DRAFT_NOTE.to_owned()));
         let notes = comments.chain(draft).collect();
         self.diff.set_annotations(notes);
@@ -1268,16 +1371,11 @@ impl State {
     /// otherwise selecting the current branch among branches, else the first entry.
     fn rebuild_list(&mut self) {
         let kept = self.list.selected().next().map(str::to_owned);
-        let comments: Vec<Entry>;
         let entries = match self.kind {
             Kind::Changes | Kind::Staging => &[][..],
             Kind::Commits => &self.overview.commits,
             Kind::Branches => &self.overview.branches,
             Kind::Stashes => &self.overview.stashes,
-            Kind::Comments => {
-                comments = self.comments.listed().into_iter().map(comment_entry).collect();
-                &comments
-            }
         };
         self.list = TreeModel::new().key("list");
         for entry in entries {
@@ -1317,12 +1415,11 @@ fn mark<T>(tree: &mut TreeModel<T>, id: &str) {
     }
 }
 
-fn comment_entry(comment: &Comment) -> Entry {
-    let location = comment.anchor.location();
-    Entry {
-        id: comment.id.to_string(),
-        title: comment.body.lines().next().unwrap_or_default().to_owned(),
-        detail: comment.status().map_or_else(|| location.clone(), |status| format!("{location} · {}", status.to_lowercase())),
+/// What copying `count` open comments says it does.
+pub fn copy_label(count: usize) -> String {
+    match count {
+        1 => "Copy 1 open comment".to_owned(),
+        n => format!("Copy {n} open comments"),
     }
 }
 
@@ -1635,15 +1732,19 @@ mod tests {
     }
 
     #[test]
-    fn the_palette_switches_to_any_other_review_kind() {
+    fn the_palette_switches_to_any_other_review_kind_and_from_the_comments_page_to_any() {
         let (_fixture, mut state) = state();
-        state.open_palette();
-        state.palette_text = TextEdit::new("review".to_owned());
-        let labels: Vec<String> = state.palette_commands().into_iter().map(|command| command.label).collect();
-        assert_eq!(labels, ["Staging", "Commits", "Branches", "Stashes", "Comments"]);
+        let reviews = |state: &mut State| {
+            state.open_palette();
+            state.palette_text = TextEdit::new("review".to_owned());
+            state.palette_commands().into_iter().map(|command| command.label).collect::<Vec<_>>()
+        };
+        assert_eq!(reviews(&mut state), ["Changes", "Branches", "Commits", "Stashes"]);
 
-        state.run_command(1, &mut Tx::default());
-        assert_eq!(state.kind, Kind::Commits);
+        state.toggle_comments();
+        assert_eq!(reviews(&mut state), ["Staging", "Changes", "Branches", "Commits", "Stashes"]);
+        state.run_command(3, &mut Tx::default());
+        assert_eq!((state.kind, state.showing_comments), (Kind::Commits, false));
     }
 
     #[test]
@@ -1663,15 +1764,72 @@ mod tests {
         let (_fixture, mut state) = state();
         land(&mut state, Review::Changes, TWO_FILES);
         state.select_kind(Kind::Commits);
-        state.diff.set_mode(DiffMode::Unified);
+        state.toggle_comments();
+        state.set_layout(DiffMode::Unified);
         state.shell.open_text = TextEdit::new("~/elsewhere".to_owned());
         let other = Fixture::new();
 
         state.show_opened(Opened::Repository(other.repo.clone(), Comments::load(&other.repo)));
 
         assert_eq!(state.repo.as_ref().map(Repo::root), Some(other.repo.root()));
-        assert_eq!((state.kind, state.diff.files().len(), state.diff.mode()), (Kind::Changes, 0, DiffMode::Unified));
+        assert_eq!((state.kind, state.showing_comments, state.diff.files().len()), (Kind::Staging, false, 0));
+        assert_eq!((state.diff.mode(), state.comment_sheet.mode()), (DiffMode::Unified, DiffMode::Unified));
         assert_eq!(state.shell.open_text.text, "~/elsewhere");
+    }
+
+    fn on_line(line: u32) -> Anchor {
+        Anchor { path: "a.txt".into(), side: rune_kit::diff::Side::New, lines: Some(crate::comments::Lines { start: line, end: line, quoted: vec!["A".into()] }) }
+    }
+
+    #[test]
+    fn a_new_comment_keeps_the_diff_it_was_written_on() {
+        let (_fixture, mut state) = state();
+        land(&mut state, Review::Changes, TWO_FILES);
+        state.compose_on_lines(LineRange::line(1, rune_kit::diff::LineRef::new(rune_kit::diff::Side::New, 1)));
+        state.draft_text = TextEdit::new("Why?".to_owned());
+
+        state.submit_draft();
+
+        let snippet = state.comments.open()[0].snippet.clone().unwrap();
+        assert!(snippet.patch.contains("+C") && !snippet.patch.contains("+A"), "{}", snippet.patch);
+        assert_eq!(state.comment_sheet.files()[0].path(), "c.txt");
+    }
+
+    #[test]
+    fn the_comments_page_lists_resolved_comments_last_and_closed_and_keeps_what_the_reader_opened() {
+        let (_fixture, mut state) = state();
+        for body in ["one", "two", "three"] {
+            state.comments.add(on_line(1), Review::Changes, None, None, body.into());
+        }
+        state.resolve_comment(1);
+        let ids = |state: &State| state.sheet.iter().map(|(id, _)| *id).collect::<Vec<_>>();
+        let closed = |state: &State| (0..state.sheet.len()).map(|file| state.comment_sheet.collapsed(file)).collect::<Vec<_>>();
+        assert_eq!((ids(&state), closed(&state)), (vec![2, 3, 1], vec![false, false, true]));
+
+        state.comment_sheet.set_collapsed(0, true);
+        state.comment_sheet.set_collapsed(2, false);
+        state.comments.add(on_line(1), Review::Changes, None, None, "four".into());
+        state.comments_changed();
+        assert_eq!((ids(&state), closed(&state)), (vec![2, 3, 4, 1], vec![true, false, false, false]));
+
+        state.reopen_comment(1);
+        state.resolve_comment(1);
+        assert!(closed(&state)[3], "resolving again closes it again");
+    }
+
+    #[test]
+    fn show_in_diff_opens_the_comments_review_while_it_is_on_offer() {
+        let (_fixture, mut state) = state();
+        state.overview.commits = vec![Entry { id: "abc".into(), title: "Fix".into(), detail: String::new() }];
+        state.comments.add(on_line(1), Review::Commit("abc".into()), None, None, "Here".into());
+        state.comments.add(on_line(1), Review::Commit("gone".into()), None, None, "Lost".into());
+        state.toggle_comments();
+
+        state.show_in_diff(2);
+        assert!(state.showing_comments);
+
+        state.show_in_diff(1);
+        assert_eq!((state.kind, state.showing_comments, state.list.selected().next()), (Kind::Commits, false, Some("abc")));
     }
 
     #[test]

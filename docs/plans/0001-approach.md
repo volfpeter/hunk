@@ -1,6 +1,6 @@
 # 0001: Approach
 
-Status: step 4d done, waiting for Peter's UI review. See [Tasks](#tasks).
+Status: step 4e done, waiting for Peter's UI review. See [Tasks](#tasks).
 
 ## Intent
 
@@ -203,14 +203,16 @@ Comments page:
 
 Unified or Split becomes one setting for every diff, kept across restarts. That is app state beside the recent repositories: update the invariant when it lands.
 
+Built: Comments is a page, not a review: the kind under it stays, so the button goes back to it. Copy all left the bar, for the page's header and the palette, as the bar overflows (step 4g) and the page shows what gets copied. Each entry's header holds its lines now, the review it was written in, its status, Copy and Show in diff, so the card under it drops its location and badge and keeps its actions beside its text. Show in diff is offered only while the review is on offer: a commit beyond the list, a dropped stash or a deleted branch has none. A snippet is three rows above and below the lines, a removed line counting as one, within one hunk unless the diff holds the whole text. A whole-file comment keeps the first seven lines of its first hunk, and its card goes under the last. A comment with neither a snippet nor lines, a whole-file one from before this, gets no entry and shows above the entries. Rune opens a snippet that doesn't start at line 1 with a gap row counting the lines before it (see `docs/rune-quirks.md`). The page rebuilds only when a comment comes, goes or changes status, and an entry keeps what the reader opened or closed while it stays resolved or open.
+
 Tasks:
 
-- [ ] Reorder the reviews, Staging first and the default
-- [ ] Comments as a button on the right of the bar, and icons for Commit, Pull and Push; Refresh only in the palette
-- [ ] Unified or Split as one setting for every diff, kept across restarts
-- [ ] Save a snippet of the diff with each new comment
-- [ ] Comments page: every comment with its snippet, open, outdated, then resolved, resolved collapsed
-- [ ] Copy one comment, and copy every open comment that isn't outdated
+- [x] Reorder the reviews, Staging first and the default
+- [x] Comments as a button on the right of the bar, and icons for Commit, Pull and Push; Refresh only in the palette
+- [x] Unified or Split as one setting for every diff, kept across restarts
+- [x] Save a snippet of the diff with each new comment
+- [x] Comments page: every comment with its snippet, open, outdated, then resolved, resolved collapsed
+- [x] Copy one comment, and copy every open comment that isn't outdated
 
 ### Step 4f: Pull requests
 

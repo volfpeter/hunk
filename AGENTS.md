@@ -43,4 +43,4 @@ Plan and task list: `docs/plans/0001-approach.md`. Read it before starting work.
 
 - One module spawns git. Explicit argv, NUL-delimited output, pinned `-c` overrides so user config cannot change the output shape (`diff.mnemonicPrefix` does, for one).
 - No git or file IO on the UI thread. Workers return plain data; `rune_kit::diff` types hold `Rc` and are not `Send`, so they are built on the UI thread.
-- Review state lives under `<git-dir>/diffactive/`. The only app state, the recent repositories, lives in `dirs`' state folder, or its data folder where there is none.
+- Review state lives under `<git-dir>/diffactive/`. The only app state, the recent repositories and the settings, lives in `dirs`' state folder, or its data folder where there is none.

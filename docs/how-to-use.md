@@ -12,22 +12,21 @@ The name in the bar comes from the repository's `origin` remote, like `owner/pro
 
 ## Pick what to review
 
-The bar at the top picks what you're looking at:
+The bar at the top picks what you're looking at, from the narrowest to the widest:
 
+- **Staging:** what changed since you last staged. It's what opens first.
 - **Changes:** everything not committed yet
-- **Staging:** what changed since you last staged
-- **Commits:** any of the latest 200 on the current branch
 - **Branches:** what a branch added since it left its parent: the branch it grew from, else the default branch
+- **Commits:** any of the latest 200 on the current branch
 - **Stashes:** what a stash holds
-- **Comments:** every comment, from any review, open ones first
 
-**Unified** and **Split**, in the diff's top row, switch how it is laid out. That row also says what the diff compares and how much changed.
+**Unified** and **Split**, in the diff's top row, switch how it is laid out. The choice holds for every diff and repository, and the next time you start the app. That row also says what the diff compares and how much changed.
 
 The file list and the diff go by path, folders first.
 
 Unchanged lines between changes fold into a bar that says how many. Its arrows show 20 more above or below, and clicking the count shows them all. Folds close again when the diff updates.
 
-Everything updates by itself when the repository changes, so you can read while an agent edits. You stay where you are in the diff, and a comment you're writing is kept. If a file above you joins or leaves the diff, you stay in your file but go back to its start. **Refresh** is there in case something was missed.
+Everything updates by itself when the repository changes, so you can read while an agent edits. You stay where you are in the diff, and a comment you're writing is kept. If a file above you joins or leaves the diff, you stay in your file but go back to its start. **Git: Refresh** in the [command palette](#commands) is there in case something was missed.
 
 ## Comment on code
 
@@ -45,7 +44,7 @@ Press **Edit** on a comment to reword it. **Ctrl+Enter** saves, **Enter** starts
 
 Press **Delete** to remove a comment for good. It asks first, and can't be undone.
 
-In **Comments**, the same buttons sit above the list and act on the selected comment.
+The same buttons sit on each comment on the [comments page](#see-every-comment).
 
 ## How comments follow the code
 
@@ -53,13 +52,23 @@ A comment remembers the lines it was written on. Whenever the repository changes
 
 If the lines are gone, the comment is marked **outdated** rather than lost. It keeps showing the code it was written on, and recovers if that code comes back.
 
-A comment appears in any review that contains its lines, not only the one you wrote it in. Lines in a fold count: the comment shows once the fold is open, and opening it from **Comments** opens the fold. You can comment on unfolded lines too. An outdated comment has nowhere to sit in the diff, so opening it from **Comments** shows it above the diff.
+A comment appears in any review that contains its lines, not only the one you wrote it in. Lines in a fold count: the comment shows once the fold is open, and **Show in diff** on the comments page opens the fold. You can comment on unfolded lines too. An outdated comment has nowhere to sit in the diff, so **Show in diff** shows it above the diff.
+
+## See every comment
+
+**Comments**, on the right of the bar, shows how many comments are open. Press it for a page of every comment, from any review: open ones first, then outdated ones, then resolved ones. Press it again, or pick a review in the bar, to go back.
+
+Each comment sits under the code it was written on, with a few lines around it, as that code was when you wrote it. So an outdated comment still shows what it was about, and its line numbers can differ from where the comment is now, which its header says. The header also names the review it was written in and its status.
+
+Resolved comments start closed: open one with the arrow by its file name. What you open or close stays so until the comment is resolved or reopened.
+
+**Show in diff** in a comment's header opens its review at the comment. A commit, branch or stash that is gone has no review to open.
 
 ## Hand comments to an agent
 
-**Copy prompt** copies every open comment as one prompt, with the file, lines and code each one refers to. Paste it into your coding agent.
+**Copy 3 open comments**, at the top of the comments page or in the [command palette](#commands), copies them as one prompt, with the file, lines and code each one refers to. Paste it into your coding agent. Outdated comments are left out, as their code is gone. **Copy** in a comment's header copies that one alone, outdated or not.
 
-Once a comment is dealt with, press **Resolve** on it. Resolved comments leave the diff and future prompts, but stay at the end of **Comments**. Select one there and press **Reopen** to bring it back.
+Once a comment is dealt with, press **Resolve** on it. Resolved comments leave the diff and future prompts, but stay at the end of the comments page. Press **Reopen** on one to bring it back.
 
 ## Stage, commit and discard
 
@@ -74,7 +83,7 @@ Each file in the diff has its buttons in its header:
 
 **Stage all** above the unstaged list and **Unstage all** above the staged list act on everything at once. The [command palette](#commands) has them too.
 
-To commit, press **Ctrl+Enter** or **Ctrl+Shift+C** (or run **Git: Commit** from the [command palette](#commands)), write a message and press the dialog's **Commit**, or **Ctrl+Enter**. On its left, the dialog sums up what the commit takes: new, changed and deleted files. It also lists what stays uncommitted, marking files the commit takes only part of, which often means you forgot to stage something. With nothing staged, the commit takes everything, new files included. **Enter** starts a new line. Your commit hooks run as usual. Closing the dialog keeps the message, and so does a commit that fails.
+To commit, press **Commit** at the right of the bar, **Ctrl+Enter** or **Ctrl+Shift+C** (or run **Git: Commit** from the [command palette](#commands)), write a message and press the dialog's **Commit**, or **Ctrl+Enter**. On its left, the dialog sums up what the commit takes: new, changed and deleted files. It also lists what stays uncommitted, marking files the commit takes only part of, which often means you forgot to stage something. With nothing staged, the commit takes everything, new files included. **Enter** starts a new line. Your commit hooks run as usual. Closing the dialog keeps the message, and so does a commit that fails.
 
 ## Branches and stashes
 
@@ -96,7 +105,7 @@ Type a name no branch has, and the list offers **Create branch** with it, starti
 
 ## Pull and push
 
-**Pull** and **Push** sit in the bar, with arrows showing how many commits there are to get or send. **Ctrl+Shift+↓** pulls and **Ctrl+Shift+↑** pushes. A branch that was never pushed goes to `origin`.
+**Pull** (the arrow down) and **Push** (the arrow up) sit at the right of the bar, each with the number of commits there are to get or send, when there are any. Hover them for their keys. **Ctrl+Shift+↓** pulls and **Ctrl+Shift+↑** pushes. A branch that was never pushed goes to `origin`.
 
 They use your own Git setup, but can't answer prompts: if Git needs a password it fails and shows you why. When anything fails, you see what Git said. When it works, a notice in the bottom right says what happened, for a few seconds; staging and unstaging show in the lists instead.
 

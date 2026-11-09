@@ -1,12 +1,12 @@
 //! The window: a bar to pick what to review, the lists behind that choice, and the diff.
 
-use rune::{Cx, El, Icon, ScrollSpec, TextEdit, Tx, col, icon, row, text};
+use rune::{Color, Cx, El, Icon, ScrollSpec, TextEdit, TextStyle, Tx, col, icon, row, text};
 use rune::{Key, KeyEvent, Mods};
 use rune_kit::diff::{Annotation, DiffMode, DiffView};
-use rune_kit::{Badge, Button, ButtonVariant, ControlSize, Dialog, FileNode, Kit, RadioGroup, RadioItem, SegmentedControl, Spinner, TextArea, TextInput, Toast, ToastRegion, Tree, TreeItem, TreeModel, TreeStyle, root};
+use rune_kit::{Badge, Button, ButtonVariant, ControlSize, Dialog, FileNode, IconButton, IconButtonVariant, Kit, RadioGroup, RadioItem, SegmentedControl, Spinner, TextArea, TextInput, Toast, ToastRegion, Tree, TreeItem, TreeModel, TreeStyle, root};
 
 use crate::action::{Action, Stashed};
-use crate::app::{Command, DRAFT_NOTE, Kind, State};
+use crate::app::{COMMIT, Command, DRAFT_NOTE, Kind, PULL, PUSH, State, copy_label};
 use crate::comments::Comment;
 use crate::open::{Choice, tilde};
 use crate::overview::{CommitPlan, Entry, LineCounts};
@@ -46,6 +46,45 @@ static COMPARED: Icon = Icon {
     body: r#"<path d="M2.5 5H13M10.5 2.5L13 5L10.5 7.5M13.5 11H3M5.5 8.5L3 11L5.5 13.5" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"/>"#,
 };
 
+/// Committing: a commit's dot on its line.
+static COMMIT_ICON: Icon = Icon {
+    name: "diffactive-commit",
+    view: 16.0,
+    body: r#"<circle cx="8" cy="8" r="2.75" stroke="currentColor" stroke-width="1.5" fill="none"/><path d="M1.5 8H5.25M10.75 8H14.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>"#,
+};
+
+/// Pulling: down onto a base.
+static PULL_ICON: Icon = Icon {
+    name: "diffactive-pull",
+    view: 16.0,
+    body: r#"<path d="M8 2V10.5M4.5 7L8 10.5L11.5 7M3 13.75H13" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" fill="none"/>"#,
+};
+
+/// Pushing: up off a base.
+static PUSH_ICON: Icon = Icon {
+    name: "diffactive-push",
+    view: 16.0,
+    body: r#"<path d="M8 13.75V5.25M4.5 8.75L8 5.25L11.5 8.75M3 2H13" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" fill="none"/>"#,
+};
+
+/// Comments: a speech bubble.
+static COMMENTS_ICON: Icon = Icon {
+    name: "diffactive-comments",
+    view: 16.0,
+    body: r#"<path d="M2.5 3.5C2.5 2.95 2.95 2.5 3.5 2.5H12.5C13.05 2.5 13.5 2.95 13.5 3.5V10C13.5 10.55 13.05 11 12.5 11H7L4.5 13.5V11H3.5C2.95 11 2.5 10.55 2.5 10V3.5Z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" fill="none"/>"#,
+};
+
+/// Where a comment card sits, which decides what it repeats of its surroundings.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum CardPlace {
+    /// Under its line in a diff.
+    Line,
+    /// Above a diff that has nowhere to show it, so it quotes its code.
+    AboveDiff,
+    /// Under its snippet on the comments page, whose header says where it is.
+    Snippet,
+}
+
 /// Which text a comment field writes to and what its buttons do.
 #[derive(Clone, Copy)]
 struct Writing {
@@ -80,7 +119,8 @@ pub fn view(s: &State, cx: &mut Cx<State>) -> El {
     if !s.has_repository() {
         return root(col().fill(k.c.page).padding(SHEET_GAP).child(welcome(s, &k)), overlays);
     }
-    let sheets = col().w_full().grow(1.0).min_h(0.0).px(SHEET_GAP).pb(SHEET_GAP).gap(SHEET_GAP).child(panel(s, &k)).child(main(s, &k));
+    let sheets = col().w_full().grow(1.0).min_h(0.0).px(SHEET_GAP).pb(SHEET_GAP).gap(SHEET_GAP);
+    let sheets = if s.showing_comments { sheets.child(comments_page(s, &k)) } else { sheets.child(panel(s, &k)).child(main(s, &k)) };
     root(col().fill(k.c.page).child(bar(s, &k)).child(sheets), overlays)
 }
 
@@ -104,18 +144,28 @@ fn sheet(k: &Kit, content: El) -> El {
 }
 
 fn bar(s: &State, k: &Kit) -> El {
-    let open = s.comments.open().len();
-    let labels = Kind::ALL.map(|kind| match kind {
-        Kind::Comments if open > 0 => format!("{} ({open})", kind.label()),
-        _ => kind.label().to_owned(),
-    });
-    let selected = Kind::ALL.iter().position(|kind| *kind == s.kind);
-    let kinds = SegmentedControl::new(&labels, selected).fit().on_pick(|s: &mut State, i, _: &mut Tx| s.select_kind(Kind::ALL[i]));
+    let selected = Kind::ALL.iter().position(|kind| *kind == s.kind).filter(|_| !s.showing_comments);
+    let kinds = SegmentedControl::new(&Kind::ALL.map(Kind::label), selected).fit().on_pick(|s: &mut State, i, _: &mut Tx| s.select_kind(Kind::ALL[i]));
 
+    let open = s.comments.open().len();
+    let comments = Button::new(format!("Comments, {open} open"))
+        .icon(&COMMENTS_ICON)
+        .variant(ButtonVariant::Ghost)
+        .expanded(s.showing_comments)
+        .help(if s.showing_comments { "Back to the review" } else { "Every comment, with the code it was written on" })
+        .label_with(move |font, ink| text(if open > 0 { format!("Comments {open}") } else { "Comments".to_owned() }).font(font).color(ink))
+        .on_press(State::toggle_comments);
+    let commit = Button::new("Commit")
+        .icon(&COMMIT_ICON)
+        .variant(ButtonVariant::Ghost)
+        .help("Commit what is staged, or everything when nothing is")
+        .shortcut(COMMIT)
+        .disabled(!s.can_start_commit())
+        .on_press(State::start_commit);
     let behind = s.overview.upstream.map_or(0, |upstream| upstream.behind);
     let ahead = s.overview.upstream.map_or(0, |upstream| upstream.ahead);
-    let pull = if behind > 0 { format!("Pull ↓{behind}") } else { "Pull".to_owned() };
-    let push = if ahead > 0 { format!("Push ↑{ahead}") } else { "Push".to_owned() };
+    let pull = sync_button(k, &PULL_ICON, "Pull", behind, PULL, s.running.is_some(), |s| s.run(Action::Pull));
+    let push = sync_button(k, &PUSH_ICON, "Push", ahead, PUSH, !s.can_push(), |s| s.run(Action::Push));
 
     let repository = head_button(s.repo_name(), "Open another repository", "Ctrl+O").disabled(!s.can_open()).on_press(State::open_opener);
     let branch = head_button(s.overview.head.clone(), "Switch branch", "Ctrl+B").variant(ButtonVariant::GhostMuted).on_press(State::open_switcher);
@@ -132,17 +182,19 @@ fn bar(s: &State, k: &Kit) -> El {
         .child(kinds.build(k))
         .child(row().grow(1.0))
         .children(s.running.map(|action| progress(k, action)))
-        .child(
-            Button::new(if s.just_copied() { "Copied" } else { "Copy prompt" })
-                .variant(ButtonVariant::Ghost)
-                .disabled(open == 0)
-                .help("Copy all open comments as a prompt for an agent")
-                .on_press_tx(State::copy_prompt)
-                .build(k),
-        )
-        .child(Button::new("Refresh").variant(ButtonVariant::Ghost).on_press(|s: &mut State| s.refresh()).build(k))
-        .child(Button::new(pull).variant(ButtonVariant::Ghost).disabled(s.running.is_some()).on_press(|s: &mut State| s.run(Action::Pull)).build(k))
-        .child(Button::new(push).variant(ButtonVariant::Ghost).disabled(!s.can_push()).on_press(|s: &mut State| s.run(Action::Push)).build(k))
+        .child(comments.build(k).key("comments"))
+        .child(commit.build(k).key("commit"))
+        .child(pull.key("pull"))
+        .child(push.key("push"))
+}
+
+/// A button of the bar that moves commits, showing how many there are to move, if any.
+fn sync_button(k: &Kit, glyph: &'static Icon, label: &str, commits: u32, shortcut: &str, disabled: bool, act: fn(&mut State)) -> El {
+    if commits == 0 {
+        return IconButton::new(glyph).variant(IconButtonVariant::Ghost).label(label).shortcut(shortcut).disabled(disabled).on_press(act).build(k);
+    }
+    let button = Button::new(format!("{label}, {commits} commits")).icon(glyph).variant(ButtonVariant::Ghost).help(label).shortcut(shortcut);
+    button.label_with(move |font, ink| text(commits.to_string()).font(font).color(ink)).disabled(disabled).on_press(act).build(k)
 }
 
 /// A button in the bar naming what is on screen, cut to fit.
@@ -197,19 +249,10 @@ fn entries(s: &State, k: &Kit) -> El {
 /// What sits above the list: what can be done to its selected entry.
 fn list_actions(s: &State, k: &Kit) -> Option<El> {
     match s.kind {
-        Kind::Comments if !s.list.is_empty() => Some(comments_summary(s, k)),
         Kind::Branches => Some(branch_actions(s, k)),
         Kind::Stashes if !s.list.is_empty() => Some(stash_actions(s, k)),
         _ => None,
     }
-}
-
-/// How many comments there are, and what can be done to the selected one.
-fn comments_summary(s: &State, k: &Kit) -> El {
-    let open = s.comments.open().len();
-    let resolved = s.comments.listed().len() - open;
-    let actions = s.selected_comment().filter(|comment| s.editing != Some(comment.id));
-    list_header(k, format!("{open} open, {resolved} resolved")).children(actions.map(|comment| comment_actions(k, comment, small_button("Edit").on_press_tx(State::edit_selected))))
 }
 
 fn branch_actions(s: &State, k: &Kit) -> El {
@@ -286,13 +329,13 @@ fn main(s: &State, k: &Kit) -> El {
     if let Some(error) = &s.error {
         return area.center().padding(16.0).child(text(error.clone()).font(k.ty.ui).color(k.c.text_muted).wrap_anywhere());
     }
-    let watch_error = s.watch_error.as_ref().map(|error| format!("Changes won't show up by themselves, so press Refresh. {error}"));
+    let watch_error = s.watch_error.as_ref().map(|error| format!("Changes won't show up by themselves, so run Refresh from the palette (Ctrl+K). {error}"));
     let area = area
         .child(diff_status(s, k))
         .children(s.comments.error.as_ref().map(|error| error_line(k, error)))
         .children(watch_error.as_ref().map(|error| error_line(k, error)))
         .children(s.draft_unplaced().then(|| note(k, composer(s, k))))
-        .children(s.unplaced_comment().map(|comment| note(k, comment_card(s, k, comment, true))));
+        .children(s.unplaced_comment().map(|comment| note(k, comment_card(s, k, comment, CardPlace::AboveDiff))));
     if s.diff.files().is_empty() {
         return area.child(col().w_full().grow(1.0).center().child(text("Nothing to review").font(k.ty.ui).color(k.c.text_muted)));
     }
@@ -312,27 +355,37 @@ fn diff_status(s: &State, k: &Kit) -> El {
         1 => "1 file".to_owned(),
         n => format!("{n} files"),
     };
+    let status = status_line()
+        .children(s.shown_review().map(|review| compared(k, review, k.ty.ui_medium, k.c.text_base)))
+        .child(one_line(format!("{count}  +{added} −{removed}")).font(k.ty.ui).color(k.c.text_muted))
+        .child(row().grow(1.0))
+        .child(layout_control(s, k));
+    sheet_header(k, "diff-status", status)
+}
+
+/// The row at the top of a sheet, saying what it shows.
+fn status_line() -> El {
+    row().w_full().gap(12.0).px(12.0).py(6.0).items_center()
+}
+
+/// `status` set apart from the rest of its sheet.
+fn sheet_header(k: &Kit, key: &str, status: El) -> El {
+    col().key(key).w_full().child(status).child(row().w_full().h(1.0).fill(k.c.border_weak))
+}
+
+/// Unified or Split, for every diff.
+fn layout_control(s: &State, k: &Kit) -> El {
     let split = s.diff.mode() == DiffMode::Split;
     let modes = SegmentedControl::new(&["Unified", "Split"], Some(split as usize)).fit().on_pick(|s: &mut State, i, tx: &mut Tx| {
         tx.motion(rune::tok::motion::SNAPPY);
-        s.diff.set_mode(if i == 1 { DiffMode::Split } else { DiffMode::Unified });
+        s.set_layout(if i == 1 { DiffMode::Split } else { DiffMode::Unified });
     });
-    let status = row()
-        .w_full()
-        .gap(12.0)
-        .px(12.0)
-        .py(6.0)
-        .items_center()
-        .children(s.shown_review().map(|review| compared(k, review)))
-        .child(one_line(format!("{count}  +{added} −{removed}")).font(k.ty.ui).color(k.c.text_muted))
-        .child(row().grow(1.0))
-        .child(modes.build(k));
-    col().key("diff-status").w_full().child(status).child(row().w_full().h(1.0).fill(k.c.border_weak))
+    modes.build(k)
 }
 
-/// The two points `review` compares, set apart by an icon.
-fn compared(k: &Kit, review: &Review) -> El {
-    let name = |name: String| one_line(name).font(k.ty.ui_medium).color(k.c.text_base);
+/// The two points `review` compares, set apart by an icon, in `font` and `color`.
+fn compared(k: &Kit, review: &Review, font: TextStyle, color: Color) -> El {
+    let name = |name: String| one_line(name).font(font).color(color);
     let (old, new) = review.sides();
     row()
         .label(review.title())
@@ -343,6 +396,64 @@ fn compared(k: &Kit, review: &Review) -> El {
         .child(name(old).max_w(DETAIL_MAX_WIDTH))
         .child(icon(&COMPARED, 14.0).color(k.c.text_muted).a11y_hidden())
         .child(name(new))
+}
+
+/// Every comment on one sheet, open first, each under the code it was written on.
+fn comments_page(s: &State, k: &Kit) -> El {
+    let area = sheet(k, col().key("comments-page").w_full().grow(1.0).min_h(0.0));
+    let listed = s.comments.listed();
+    let outdated = listed.iter().filter(|comment| comment.status() == Some("Outdated")).count();
+    let resolved = listed.iter().filter(|comment| comment.resolved).count();
+    let open = listed.len() - outdated - resolved;
+    let to_copy = s.comments_to_copy().len();
+    let copy = Button::new(if s.just_copied(None) { "Copied".to_owned() } else { copy_label(to_copy) })
+        .variant(ButtonVariant::Ghost)
+        .disabled(to_copy == 0)
+        .help("Copy them as one prompt for an agent, leaving out outdated ones")
+        .on_press_tx(State::copy_open_comments);
+    let status = status_line()
+        .child(one_line(format!("{open} open, {outdated} outdated, {resolved} resolved")).font(k.ty.ui_medium).color(k.c.text_base))
+        .child(row().grow(1.0))
+        .child(copy.build(k))
+        .child(layout_control(s, k));
+    let area = area
+        .child(sheet_header(k, "comments-status", status))
+        .children(s.comments.error.as_ref().map(|error| error_line(k, error)))
+        .children(s.comments_off_sheet().into_iter().map(|comment| note(k, comment_card(s, k, comment, CardPlace::AboveDiff))));
+    if listed.is_empty() {
+        return area.child(col().w_full().grow(1.0).center().child(text("No comments yet").font(k.ty.ui).color(k.c.text_muted)));
+    }
+    let (annotation_kit, header_kit) = (k.clone(), k.clone());
+    let entries = DiffView::new(|s: &State| &s.comment_sheet, |s: &mut State| &mut s.comment_sheet)
+        .key("comment-sheet")
+        .annotation(move |s: &State, annotation: &Annotation| match annotation.id.parse().ok().and_then(|id| s.comments.get(id)) {
+            Some(comment) => note(&annotation_kit, comment_card(s, &annotation_kit, comment, CardPlace::Snippet)),
+            None => col(),
+        })
+        .header_actions(move |s: &State, file| entry_actions(s, &header_kit, file));
+    area.child(entries.build(s, k))
+}
+
+/// Where the comment of the comments page's entry `file` is now, the review it was written in
+/// and its status, with the ways to copy it and to see it in its review.
+fn entry_actions(s: &State, k: &Kit, file: usize) -> El {
+    let Some(comment) = s.sheet_comment(file) else { return row() };
+    let id = comment.id;
+    let lines = match &comment.anchor.lines {
+        None => "whole file".to_owned(),
+        Some(lines) if lines.start == lines.end => format!("line {}", lines.start),
+        Some(lines) => format!("lines {}–{}", lines.start, lines.end),
+    };
+    let copy = small_button(if s.just_copied(Some(id)) { "Copied" } else { "Copy" }).help("Copy it as a prompt for an agent");
+    let show = s.review_place(&comment.review).map(|_| small_button("Show in diff").on_press(move |s: &mut State| s.show_in_diff(id)).build(k));
+    row()
+        .gap(8.0)
+        .items_center()
+        .child(text(lines).font(k.ty.text_small).color(k.c.text_muted))
+        .child(compared(k, &comment.review, k.ty.text_small, k.c.text_muted).max_w(2.0 * DETAIL_MAX_WIDTH))
+        .children(comment.status().map(|status| Badge::new(status).build(k)))
+        .child(copy.on_press_tx(move |s: &mut State, tx: &mut Tx| s.copy_comment(id, tx)).build(k))
+        .children(show)
 }
 
 fn error_line(k: &Kit, error: &str) -> El {
@@ -366,7 +477,7 @@ fn annotated(s: &State, k: &Kit, annotation: &Annotation) -> El {
         return note(k, composer(s, k));
     }
     match annotation.id.parse().ok().and_then(|id| s.comments.get(id)) {
-        Some(comment) => note(k, comment_card(s, k, comment, false)),
+        Some(comment) => note(k, comment_card(s, k, comment, CardPlace::Line)),
         None => col(),
     }
 }
@@ -438,10 +549,17 @@ fn word_chord(event: &KeyEvent) -> Option<KeyEvent> {
     (by_word && ctrl && cmd).then(|| KeyEvent { key: event.key.clone(), mods: Mods { alt: true, shift, ..Mods::default() } })
 }
 
-/// A comment, with the code it quotes when `quoted`.
-fn comment_card(s: &State, k: &Kit, comment: &Comment, quoted: bool) -> El {
+/// A comment, saying where it is unless it sits under its snippet, and quoting its code when it
+/// sits above a diff.
+fn comment_card(s: &State, k: &Kit, comment: &Comment, place: CardPlace) -> El {
     let id = comment.id;
     let editing = s.editing == Some(id);
+    let actions = (!editing).then(|| comment_actions(k, comment, small_button("Edit").on_press(move |s: &mut State| s.start_edit(id))));
+    let body = if editing { comment_field(k, &s.edit_text, EDITED_COMMENT) } else { text(comment.body.clone()).font(k.ty.body).color(k.c.text_base).wrap_anywhere() };
+    if place == CardPlace::Snippet {
+        // Its entry's header says where it is, so the actions sit beside the text.
+        return col().child(row().w_full().gap(8.0).items_start().child(body.grow(1.0).shrink().min_w(0.0)).children(actions));
+    }
     let heading = row()
         .w_full()
         .gap(8.0)
@@ -449,9 +567,8 @@ fn comment_card(s: &State, k: &Kit, comment: &Comment, quoted: bool) -> El {
         .child(text(comment.anchor.location()).font(k.ty.ui_medium).color(k.c.text_base).wrap_anywhere().shrink().min_w(0.0))
         .children(comment.status().map(|status| Badge::new(status).build(k)))
         .child(row().grow(1.0))
-        .children((!editing).then(|| comment_actions(k, comment, small_button("Edit").on_press(move |s: &mut State| s.start_edit(id)))));
-    let quote = comment.anchor.lines.as_ref().filter(|_| quoted).map(|lines| text(lines.quoted.join("\n")).font(k.ty.mono).color(k.c.text_muted).wrap_anywhere());
-    let body = if editing { comment_field(k, &s.edit_text, EDITED_COMMENT) } else { text(comment.body.clone()).font(k.ty.body).color(k.c.text_base).wrap_anywhere() };
+        .children(actions);
+    let quote = comment.anchor.lines.as_ref().filter(|_| place == CardPlace::AboveDiff).map(|lines| text(lines.quoted.join("\n")).font(k.ty.mono).color(k.c.text_muted).wrap_anywhere());
     col().child(heading).children(quote).child(body)
 }
 

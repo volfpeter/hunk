@@ -10,11 +10,13 @@ Everything the app does, to try at your own pace. A tick means Peter tried it an
 - [ ] Ctrl+O, or the repository's name in the bar, opens a repository
 - [ ] The open dialog lists recent repositories, newest first, without those that are gone
 - [ ] Typing a path completes folders, marking repositories; Tab completes, Enter opens
-- [ ] Switching repositories starts afresh, keeping Unified or Split
+- [ ] Switching repositories starts afresh
 - [ ] The bar names the repository `owner/project` after its remote, or its folder
 
 ## Reviews
 
+- [ ] The bar lists them by reach: Staging, Changes, Branches, Commits, Stashes
+- [ ] Staging opens first, on start and in another repository
 - [ ] Changes: everything not committed, new files included
 - [ ] Staging: what changed since you last staged
 - [ ] Commits: any of the latest 200 on the current branch
@@ -26,6 +28,7 @@ Everything the app does, to try at your own pace. A tick means Peter tried it an
 ## Diff
 
 - [ ] Unified and split layout
+- [ ] Unified or Split holds for every diff, the comments page too, and across restarts
 - [ ] Syntax highlighting
 - [ ] Changed files list jumps to a file, and follows as you scroll
 - [ ] File list and diff use the same order, by path
@@ -42,10 +45,16 @@ Everything the app does, to try at your own pace. A tick means Peter tried it an
 - [ ] Comments follow their code as it moves
 - [ ] Comments whose code is gone show as outdated, and recover if it returns
 - [ ] Comments appear in any review containing their lines
-- [ ] Comment on unfolded lines, and opening a comment in a fold from Comments unfolds it
-- [ ] Comments tab lists everything, open first
-- [ ] Edit, delete, resolve and reopen, in the diff and from the Comments tab
-- [ ] Copy all open comments as one prompt
+- [ ] Comment on unfolded lines, and Show in diff on a comment in a fold unfolds it
+- [ ] Comments, on the right of the bar with the open count, opens a page of every comment, and again goes back
+- [ ] The page shows each comment under the code it was written on, with three lines around it, even once that code has changed
+- [ ] The page lists open comments, then outdated, then resolved ones, which start closed
+- [ ] Opening or closing an entry on the page holds until the comment is resolved or reopened
+- [ ] Each entry's header says where the comment is now, the review it was written in and its status
+- [ ] Show in diff opens the comment's review at the comment, resolved or not
+- [ ] Edit, delete, resolve and reopen, in the diff and on the page
+- [ ] Copy one comment, outdated or not, from its entry
+- [ ] Copy every open comment that isn't outdated, from the page or the palette, its label counting them
 
 ## Staying up to date
 
@@ -54,7 +63,7 @@ Everything the app does, to try at your own pace. A tick means Peter tried it an
 - [ ] Edits elsewhere leave your place in the diff alone
 - [ ] A file joining or leaving above you keeps you in your file, at its start
 - [ ] A comment being written survives edits, even if its lines disappear
-- [ ] Manual Refresh button
+- [ ] Refresh from the palette
 
 ## Git
 
@@ -87,6 +96,7 @@ Everything the app does, to try at your own pace. A tick means Peter tried it an
 - [ ] Apply, pop and drop a stash
 - [ ] Pull (only tried against a local repository so far)
 - [ ] Push, publishing a new branch to `origin` (only tried against a local repository so far)
+- [ ] Commit, Pull and Push sit at the right of the bar, their keys in their tooltips
 - [ ] Pull and Push show how many commits there are to get or send
 - [ ] When git fails, its message shows in a dialog
 - [ ] A notice says what an operation did, for a few seconds: commit, stash, checkout, discard, pull, push and the rest, but not staging

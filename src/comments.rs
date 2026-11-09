@@ -12,6 +12,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::git::Repo;
 use crate::review::Review;
+use crate::snippet::Snippet;
 
 const FILE_NAME: &str = "comments.json";
 const VERSION: u32 = 1;
@@ -164,6 +165,10 @@ pub struct Comment {
     pub resolved: bool,
     /// The code it is about is gone.
     pub outdated: bool,
+    /// The diff it was written on, around its lines, as it was then. `None` for comments kept
+    /// before snippets were, and for one written where its lines had gone.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub snippet: Option<Snippet>,
 }
 
 impl Comment {
@@ -177,9 +182,23 @@ impl Comment {
         }
     }
 
+    /// What it was written on: its snippet, else its quoted lines.
+    pub fn snippet(&self) -> Option<Snippet> {
+        self.snippet.clone().or_else(|| Snippet::quoted(&self.anchor))
+    }
+
     /// Sorts by file, a whole-file comment before its lines, then line, then age.
     fn review_order(&self) -> (&str, u32, u64) {
         (&self.anchor.path, self.anchor.lines.as_ref().map_or(0, |lines| lines.start), self.id)
+    }
+
+    /// Open comments whose code is there first, then outdated ones, then resolved ones.
+    fn status_order(&self) -> u8 {
+        match (self.resolved, self.outdated) {
+            (false, false) => 0,
+            (false, true) => 1,
+            (true, _) => 2,
+        }
     }
 }
 
@@ -306,10 +325,11 @@ impl Comments {
         open
     }
 
-    /// Every comment: the open ones, then the resolved ones, each in review order.
+    /// Every comment: the open ones, then the outdated ones, then the resolved ones, each in
+    /// review order.
     pub fn listed(&self) -> Vec<&Comment> {
         let mut listed: Vec<&Comment> = self.all.iter().collect();
-        listed.sort_by_key(|comment| (comment.resolved, comment.review_order()));
+        listed.sort_by_key(|comment| (comment.status_order(), comment.review_order()));
         listed
     }
 
@@ -317,9 +337,9 @@ impl Comments {
         self.all.iter().find(|comment| comment.id == id)
     }
 
-    pub fn add(&mut self, anchor: Anchor, review: Review, commit: Option<String>, body: String) {
+    pub fn add(&mut self, anchor: Anchor, review: Review, commit: Option<String>, snippet: Option<Snippet>, body: String) {
         let id = self.all.iter().map(|comment| comment.id + 1).max().unwrap_or(1);
-        self.all.push(Comment { id, anchor, review, commit, body, resolved: false, outdated: false });
+        self.all.push(Comment { id, anchor, review, commit, body, resolved: false, outdated: false, snippet });
         self.save();
     }
 
@@ -400,7 +420,7 @@ mod tests {
     }
 
     fn comment(id: u64, anchor: Anchor, body: &str) -> Comment {
-        Comment { id, anchor, review: Review::Changes, commit: None, body: body.into(), resolved: false, outdated: false }
+        Comment { id, anchor, review: Review::Changes, commit: None, body: body.into(), resolved: false, outdated: false, snippet: None }
     }
 
     #[test]
@@ -556,31 +576,33 @@ Was this right?
 
         let mut comments = Comments::load(&fixture.repo);
         assert!(comments.error.is_some());
-        comments.add(anchor(1, &["a"]), Review::Changes, None, "Lost for now".into());
+        comments.add(anchor(1, &["a"]), Review::Changes, None, None, "Lost for now".into());
         assert_eq!(fs::read_to_string(&file).unwrap(), "not json");
     }
 
     #[test]
-    fn resolved_comments_list_after_open_ones_and_leave_the_prompt_until_reopened() {
+    fn outdated_then_resolved_comments_list_after_open_ones_and_resolved_leave_the_prompt_until_reopened() {
         let fixture = Fixture::new();
         let mut comments = Comments::load(&fixture.repo);
-        comments.add(anchor(1, &["a"]), Review::Changes, None, "First".into());
-        comments.add(anchor(2, &["b"]), Review::Changes, None, "Second".into());
+        comments.add(anchor(1, &["a"]), Review::Changes, None, None, "First".into());
+        comments.add(anchor(2, &["b"]), Review::Changes, None, None, "Second".into());
+        comments.add(anchor(3, &["c"]), Review::Changes, None, None, "Third".into());
+        comments.all[0].outdated = true;
         let ids = |comments: &[&Comment]| comments.iter().map(|comment| comment.id).collect::<Vec<_>>();
 
-        comments.set_resolved(1, true);
-        assert_eq!((ids(&comments.listed()), ids(&comments.open())), (vec![2, 1], vec![2]));
+        comments.set_resolved(2, true);
+        assert_eq!((ids(&comments.listed()), ids(&comments.open())), (vec![3, 1, 2], vec![1, 3]));
 
-        comments.set_resolved(1, false);
-        assert_eq!((ids(&comments.listed()), ids(&comments.open())), (vec![1, 2], vec![1, 2]));
+        comments.set_resolved(2, false);
+        assert_eq!((ids(&comments.listed()), ids(&comments.open())), (vec![2, 3, 1], vec![1, 2, 3]));
     }
 
     #[test]
     fn code_found_before_an_edit_or_delete_does_not_undo_it() {
         let fixture = Fixture::new();
         let mut comments = Comments::load(&fixture.repo);
-        comments.add(anchor(1, &["a"]), Review::Changes, None, "Before".into());
-        comments.add(anchor(2, &["b"]), Review::Changes, None, "Doomed".into());
+        comments.add(anchor(1, &["a"]), Review::Changes, None, None, "Before".into());
+        comments.add(anchor(2, &["b"]), Review::Changes, None, None, "Doomed".into());
         let found: Vec<Comment> = comments.all.iter().cloned().map(|comment| Comment { outdated: true, ..comment }).collect();
 
         comments.edit(1, "After".into());
