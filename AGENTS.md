@@ -1,8 +1,8 @@
-# diffactive
+# hunk
 
-A review-first Git desktop app, built in Rust on [Rune](https://github.com/anomalyco/rune). `diffactive` is a working name: keep it in one constant.
+A review-first Git desktop app, built in Rust on [Rune](https://github.com/anomalyco/rune). `hunk` is a working name: keep it in one constant.
 
-Plan and task list: `docs/plans/0001-approach.md`. Read it before starting work.
+Kickstart Plan and task list: `docs/plans/01-kickstart.md`. Read it before starting work.
 
 ## Product rules
 
@@ -36,11 +36,11 @@ Plan and task list: `docs/plans/0001-approach.md`. Read it before starting work.
 
 - Pin a rev of its `dev` branch; it is pre-release.
 - Rune takes issues, not pull requests.
-- Check UI work headlessly with the built binary, on a repository: `diffactive <folder> --script steps.json --snap out.png --at mark:end`, or `--tree out.json` for element keys. Point `XDG_STATE_HOME` at a scratch folder, or runs land in Peter's recent repositories. Data loads in the background, so script a wait ending in a `mark` rather than a bare `--snap`.
+- Check UI work headlessly with the built binary, on a repository: `hunk <folder> --script steps.json --snap out.png --at mark:end`, or `--tree out.json` for element keys. Point `XDG_STATE_HOME` at a scratch folder, or runs land in Peter's recent repositories. Data loads in the background, so script a wait ending in a `mark` rather than a bare `--snap`.
 - Sources of truth: the READMEs and kit examples in `research/rune`.
 
 ## Invariants
 
 - One module spawns git. Explicit argv, NUL-delimited output, pinned `-c` overrides so user config cannot change the output shape (`diff.mnemonicPrefix` does, for one).
 - No git or file IO on the UI thread. Workers return plain data; `rune_kit::diff` types hold `Rc` and are not `Send`, so they are built on the UI thread.
-- Review state lives under `<git-dir>/diffactive/`. The only app state, the recent repositories and the settings, lives in `dirs`' state folder, or its data folder where there is none.
+- Review state lives under `<git-dir>/hunk/`. The only app state, the recent repositories and the settings, lives in `dirs`' state folder, or its data folder where there is none.

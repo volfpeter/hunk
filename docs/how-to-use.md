@@ -1,8 +1,8 @@
-# How to use diffactive
+# How to use hunk
 
 ## Open a repository
 
-`diffactive ~/dev/project` opens the repository that folder is in, and `diffactive .` the one you're in. `diffactive` alone opens the last repository you had open. Without one it shows an empty window, with **Open a repository**.
+`hunk ~/dev/project` opens the repository that folder is in, and `hunk .` the one you're in. `hunk` alone opens the last repository you had open. Without one it shows an empty window, with **Open a repository**.
 
 Open a folder that isn't in a repository, and it offers **Initialise repository**, which turns it into one.
 
@@ -38,7 +38,7 @@ Everything updates by itself when the repository changes, so you can read while 
 
 **Ctrl+Enter** saves the comment, **Enter** starts a new line and **Esc** throws the draft away.
 
-Comments are saved in the repository's Git folder, at `.git/diffactive/comments.json`, so they never end up in a commit.
+Comments are saved in the repository's Git folder, at `.git/hunk/comments.json`, so they never end up in a commit.
 
 ## Change a comment
 

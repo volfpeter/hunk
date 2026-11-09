@@ -41,35 +41,35 @@ const REMOTE_NAME_WIDTH: f32 = 140.0;
 
 /// Two points compared, neither leading to the other.
 static COMPARED: Icon = Icon {
-    name: "diffactive-compared",
+    name: "hunk-compared",
     view: 16.0,
     body: r#"<path d="M2.5 5H13M10.5 2.5L13 5L10.5 7.5M13.5 11H3M5.5 8.5L3 11L5.5 13.5" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"/>"#,
 };
 
 /// Committing: a commit's dot on its line.
 static COMMIT_ICON: Icon = Icon {
-    name: "diffactive-commit",
+    name: "hunk-commit",
     view: 16.0,
     body: r#"<circle cx="8" cy="8" r="2.75" stroke="currentColor" stroke-width="1.5" fill="none"/><path d="M1.5 8H5.25M10.75 8H14.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>"#,
 };
 
 /// Pulling: down onto a base.
 static PULL_ICON: Icon = Icon {
-    name: "diffactive-pull",
+    name: "hunk-pull",
     view: 16.0,
     body: r#"<path d="M8 2V10.5M4.5 7L8 10.5L11.5 7M3 13.75H13" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" fill="none"/>"#,
 };
 
 /// Pushing: up off a base.
 static PUSH_ICON: Icon = Icon {
-    name: "diffactive-push",
+    name: "hunk-push",
     view: 16.0,
     body: r#"<path d="M8 13.75V5.25M4.5 8.75L8 5.25L11.5 8.75M3 2H13" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" fill="none"/>"#,
 };
 
 /// Comments: a speech bubble.
 static COMMENTS_ICON: Icon = Icon {
-    name: "diffactive-comments",
+    name: "hunk-comments",
     view: 16.0,
     body: r#"<path d="M2.5 3.5C2.5 2.95 2.95 2.5 3.5 2.5H12.5C13.05 2.5 13.5 2.95 13.5 3.5V10C13.5 10.55 13.05 11 12.5 11H7L4.5 13.5V11H3.5C2.95 11 2.5 10.55 2.5 10V3.5Z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" fill="none"/>"#,
 };

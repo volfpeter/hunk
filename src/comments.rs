@@ -559,7 +559,7 @@ Was this right?
     #[test]
     fn keeps_comments_across_restarts() {
         let dir = TempDir::new().unwrap();
-        let file = dir.path().join("diffactive").join(FILE_NAME);
+        let file = dir.path().join("hunk").join(FILE_NAME);
         assert_eq!(read_file(&file), Ok(Vec::new()));
 
         let comments = vec![comment(1, anchor(2, &["b"]), "Fix this.")];

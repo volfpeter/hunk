@@ -677,19 +677,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "be1e0bca6c3637f992fc1cc7cbc52a78c1ef6db076dbf1059c4323d6a2048376"
 
 [[package]]
-name = "diffactive"
-version = "0.0.1"
-dependencies = [
- "dirs",
- "notify",
- "rune",
- "rune-kit",
- "serde",
- "serde_json",
- "tempfile",
-]
-
-[[package]]
 name = "dirs"
 version = "7.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1145,6 +1132,19 @@ name = "hex"
 version = "0.4.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7f24254aa9a54b5c858eaee2f5bccdb46aaf0e486a595ed5fd8f86ba55232a70"
+
+[[package]]
+name = "hunk"
+version = "0.0.1"
+dependencies = [
+ "dirs",
+ "notify",
+ "rune",
+ "rune-kit",
+ "serde",
+ "serde_json",
+ "tempfile",
+]
 
 [[package]]
 name = "icu_collections"

@@ -1,4 +1,4 @@
-# diffactive
+# hunk
 
 A simple desktop app for reviewing Git changes, built with [Rune](https://github.com/anomalyco/rune). Review your uncommitted work, commits, branches and stashes, leave comments to hand to a coding agent, and stage, commit and push what's good.
 
@@ -10,14 +10,14 @@ You need [Rust](https://rustup.rs), Git and a GPU with Vulkan support.
 
 ```bash
 git clone <this repository>
-cd diffactive
+cd hunk
 cargo install --path .
 ```
 
 Then open a repository with it:
 
 ```bash
-diffactive path/to/your/repo
+hunk path/to/your/repo
 ```
 
 Without a folder it opens the last repository you had open.

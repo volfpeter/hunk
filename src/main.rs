@@ -25,7 +25,7 @@ use open::Opened;
 use recent::Recents;
 use settings::Settings;
 
-const NAME: &str = "diffactive";
+const NAME: &str = "hunk";
 const WINDOW_SIZE: (f32, f32) = (1500.0, 950.0);
 
 /// Starts on the folder passed, else the last repository if it is still one, else nothing. The

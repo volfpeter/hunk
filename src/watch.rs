@@ -146,7 +146,7 @@ mod tests {
         assert_eq!(counts("/repo/.git/refs/heads/main"), Some(true));
         assert_eq!(counts("/repo/.git/index.lock"), Some(false));
         assert_eq!(counts("/repo/.git/objects/ab/cdef"), Some(false));
-        assert_eq!(counts("/repo/.git/diffactive/comments.json"), Some(false));
+        assert_eq!(counts("/repo/.git/hunk/comments.json"), Some(false));
         assert_eq!(counts("/repo/src/main.rs"), None);
     }
 

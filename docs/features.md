@@ -4,8 +4,8 @@ Everything the app does, to try at your own pace. A tick means Peter tried it an
 
 ## Repositories
 
-- [ ] `diffactive <folder>` opens the repository the folder is in
-- [ ] `diffactive` alone opens the last repository, or an empty window offering to open one
+- [ ] `hunk <folder>` opens the repository the folder is in
+- [ ] `hunk` alone opens the last repository, or an empty window offering to open one
 - [ ] A folder outside any repository offers to initialise one
 - [ ] Ctrl+O, or the repository's name in the bar, opens a repository
 - [ ] The open dialog lists recent repositories, newest first, without those that are gone
