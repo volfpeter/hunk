@@ -29,6 +29,7 @@ Everything the app does, to try at your own pace. A tick means Peter tried it an
 - [ ] Changed files list jumps to a file, and follows as you scroll
 - [ ] File list and diff use the same order, by path
 - [ ] Collapse a file
+- [ ] Show the unchanged lines around changes: 20 more above or below, or all of them
 
 ## Comments
 

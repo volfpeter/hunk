@@ -45,6 +45,7 @@ Side-by-side diffs need the width, so nothing sits beside the diff. A bar picks 
 - **`notify` for watching.** Polling git would be dependency-free but spawns processes forever and still needs file stats to see further edits to a changed file.
 - **One file order, by path.** The file list's, folders first, and the diff follows it.
 - **`dirs` for app folders.** Small, and knows each platform's places.
+- **Patches carry each file whole, and Rune folds them.** So every fold opens without reading files, and git still makes the diff. Parsing whole files costs the UI thread, felt only on huge ones.
 - **Comments go to agents first.** Each stores path, side, line range and commit, enough to submit to a forge later. No destination abstraction until then.
 
 ## Tasks
@@ -247,7 +248,7 @@ Tasks:
 
 ### Later
 
-Order open, plan each when it comes up: reviewing pull requests on GitHub and Forgejo/Gitea, worktrees (below), LSP (diffle's `lsp/` is the reference), commit graph, hunk and line staging, opening folds in the diff.
+Order open, plan each when it comes up: reviewing pull requests on GitHub and Forgejo/Gitea, worktrees (below), LSP (diffle's `lsp/` is the reference), commit graph, hunk and line staging.
 
 ### Later: Worktrees
 

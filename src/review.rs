@@ -1,9 +1,15 @@
 //! What can be reviewed: a comparison between two points in a repository.
 
-use rune_kit::diff::Side;
+use rune_kit::diff::{FileDiff, Side};
 use serde::{Deserialize, Serialize};
 
 use crate::git::{GitError, Repo, Result};
+
+/// Context enough to hold any file whole, and small enough not to overflow git's sums on it.
+const WHOLE_FILE: &str = "--unified=100000000";
+
+/// Lines kept around each change in a folded diff, as `git diff` keeps by default.
+const CONTEXT: u32 = 3;
 
 /// A comparison, as a patch of what changed between its two points.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -68,7 +74,7 @@ impl Review {
         }
     }
 
-    /// The comparison as `git diff` output.
+    /// The comparison as `git diff` output, each changed file whole.
     pub fn patch(&self, repo: &Repo) -> Result<String> {
         match self {
             Review::Changes => {
@@ -79,11 +85,17 @@ impl Review {
                 Ok(diff(repo, &[&base])? + &untracked_patch(repo)?)
             }
             Review::Unstaged => Ok(diff(repo, &[])? + &untracked_patch(repo)?),
-            Review::Commit(commit) => repo.run(&["show", "--no-ext-diff", "--format=", "--diff-merges=first-parent", commit]),
+            Review::Commit(commit) => repo.run(&["show", "--no-ext-diff", WHOLE_FILE, "--format=", "--diff-merges=first-parent", commit]),
             Review::Branch { base, branch } => diff(repo, &[&format!("{base}...{branch}")]),
-            Review::Stash(stash) => repo.run(&["stash", "show", "--no-ext-diff", "--patch", "--include-untracked", &stash_commit(repo, stash)?]),
+            Review::Stash(stash) => repo.run(&["stash", "show", "--no-ext-diff", WHOLE_FILE, "--patch", "--include-untracked", &stash_commit(repo, stash)?]),
         }
     }
+}
+
+/// The files of a [`Review::patch`], folded to [`CONTEXT`] lines around each change, with every
+/// fold able to open.
+pub fn files(patch: &str) -> Vec<FileDiff> {
+    rune_kit::diff::parse(patch).into_iter().map(|file| file.fold(CONTEXT)).collect()
 }
 
 /// The full hash of the stash `stash`, for git's stash commands: they take an argument of only
@@ -93,7 +105,7 @@ pub fn stash_commit(repo: &Repo, stash: &str) -> Result<String> {
 }
 
 fn diff(repo: &Repo, revisions: &[&str]) -> Result<String> {
-    let args: Vec<&str> = ["diff", "--no-ext-diff"].iter().chain(revisions).copied().collect();
+    let args: Vec<&str> = ["diff", "--no-ext-diff", WHOLE_FILE].iter().chain(revisions).copied().collect();
     repo.run(&args)
 }
 
@@ -230,6 +242,25 @@ mod tests {
         let patch = Review::Stash(stash).patch(&fixture.repo).unwrap();
 
         assert!(patch.contains("+two"), "{patch}");
+    }
+
+    #[test]
+    fn files_fold_to_three_lines_around_a_change_and_can_open() {
+        let fixture = Fixture::new();
+        let lines = |changed: &str| (1..=20).map(|n| if n == 10 { format!("{changed}\n") } else { format!("{n}\n") }).collect::<String>();
+        fixture.commit("a.txt", &lines("10"), "first");
+        fixture.commit("a.txt", &lines("ten"), "second");
+        fixture.write("a.txt", &lines("TEN"));
+        let folded = |review: Review| {
+            let files = files(&review.patch(&fixture.repo).unwrap());
+            let file = &files[0];
+            (file.expandable(), file.hunks.iter().map(|hunk| (hunk.new_start, hunk.lines.len())).collect::<Vec<_>>())
+        };
+        assert_eq!(folded(Review::Commit("HEAD".into())), (true, vec![(7, 8)]));
+        assert_eq!(folded(Review::Changes), (true, vec![(7, 8)]));
+        fixture.git(&["stash", "push", "-q"]);
+        let stash = fixture.git(&["rev-parse", "stash@{0}"]);
+        assert_eq!(folded(Review::Stash(stash.trim().to_owned())), (true, vec![(7, 8)]));
     }
 
     #[test]

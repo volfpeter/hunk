@@ -5,7 +5,7 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use rune::{Key, KeyEvent, Latest, TextEdit, Tx, Waker};
-use rune_kit::diff::{Annotation, DiffMode, DiffState, FileDiff, LineRange, parse};
+use rune_kit::diff::{Annotation, DiffMode, DiffState, FileDiff, LineRange};
 use rune_kit::{FileNode, FileTree, TreeModel};
 
 use crate::action::{Action, Stashed};
@@ -14,7 +14,7 @@ use crate::git::{Repo, Result};
 use crate::open::{Choice, Offer, Opened, resolve};
 use crate::overview::{Entry, FileStatus, LineCounts, Overview};
 use crate::recent::Recents;
-use crate::review::{Loaded, Review};
+use crate::review::{Loaded, Review, files};
 use crate::watch::RepoWatch;
 
 /// The id of the annotation holding the comment being written.
@@ -1045,7 +1045,7 @@ impl State {
             Ok(Loaded { review, patch, commit }) => {
                 self.error = None;
                 let unchanged = self.shown.as_ref().filter(|shown| shown.review == review).map(|shown| shown.patch == patch);
-                let files = parse(&patch);
+                let files = files(&patch);
                 // The file lists go by the review on screen.
                 self.shown = Some(Shown { review, commit, patch });
                 match unchanged {

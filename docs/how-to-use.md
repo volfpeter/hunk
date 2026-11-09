@@ -25,6 +25,8 @@ The bar at the top picks what you're looking at:
 
 The file list and the diff go by path, folders first.
 
+Unchanged lines between changes fold into a bar that says how many. Its arrows show 20 more above or below, and clicking the count shows them all. Folds close again when the diff updates.
+
 Everything updates by itself when the repository changes, so you can read while an agent edits. You stay where you are in the diff, and a comment you're writing is kept. If a file above you joins or leaves the diff, you stay in your file but go back to its start. **Refresh** is there in case something was missed.
 
 ## Comment on code
