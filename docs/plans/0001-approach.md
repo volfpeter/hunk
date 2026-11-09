@@ -134,7 +134,7 @@ Keep in mind:
 - A failed commit keeps its message today. The dialog must too, and a message shouldn't be lost by closing it.
 - Stash takes new files too today. The choices map to `git stash push`'s `--include-untracked` and `--staged` (git 2.35 and later), and the name to `-m`.
 
-Built: each tree's header holds the action matching its rows, Unstage all over the staged tree and Stage all over the unstaged one. Commit and Stash were there first, but didn't match the trees below them: they live in the palette now, and get keys in step 4g. Every row has Unstage or Stage, and a folder's acts on everything under it. The diff's order still comes from a tree of all its files, since the unstaged tree no longer holds them all in Changes. The staged tree marks nothing outside Changes, so it never looks like it moved the diff. Not handled: stashing tracked changes when only new files changed does nothing, silently, as git does.
+Built: each tree's header holds the action matching its rows, Unstage all over the staged tree and Stage all over the unstaged one. Commit and Stash were there first, but didn't match the trees below them: they live in the palette now, and get keys in step 4h. Every row has Unstage or Stage, and a folder's acts on everything under it. The diff's order still comes from a tree of all its files, since the unstaged tree no longer holds them all in Changes. The staged tree marks nothing outside Changes, so it never looks like it moved the diff. Not handled: stashing tracked changes when only new files changed does nothing, silently, as git does.
 
 Tasks:
 
@@ -151,7 +151,7 @@ Switching repositories is the hard part: comments, the watcher, the loads and al
 - **The repository name** reads `<user-or-org>/<project>`, from `origin`'s URL, else the first remote's, else the folder's name.
 - **Recents are app state**, in `dirs`' state folder, or its data folder where there is none (macOS). The only state outside `<git-dir>/diffactive/`: add it to the invariants when it lands.
 
-Built: `State` is the open repository's state, all of it but its `Shell`, which holds what outlives a switch. Opening rebuilds `State` around the carried `Shell` (keeping the diff's layout), so nothing of the old repository survives: dropping its loads drops their answers, and dropping the watcher stops its thread. Opening finds the repository on a worker, comments included. It is refused while an action runs, whose outcome would go unseen. The start reads its folder and recents on the main thread before the window opens, as before. A path typed without `/` or `~` starts at the home folder. The name is the last two parts of a remote URL with a host, so a local remote gives the folder's name. Step 4e can grow that parser into host, owner and project.
+Built: `State` is the open repository's state, all of it but its `Shell`, which holds what outlives a switch. Opening rebuilds `State` around the carried `Shell` (keeping the diff's layout), so nothing of the old repository survives: dropping its loads drops their answers, and dropping the watcher stops its thread. Opening finds the repository on a worker, comments included. It is refused while an action runs, whose outcome would go unseen. The start reads its folder and recents on the main thread before the window opens, as before. A path typed without `/` or `~` starts at the home folder. The name is the last two parts of a remote URL with a host, so a local remote gives the folder's name. Step 4f can grow that parser into host, owner and project.
 
 Tasks:
 
@@ -172,7 +172,7 @@ Keep in mind:
 - **Fetch gets every remote and prunes**, so the switcher stops offering branches that were deleted on the remote. It fails on credentials the way pull does.
 - **The remotes dialog** lists each remote with its URL. It adds a remote from a name and a URL, with the name defaulting to `origin` when there is none. It removes a remote only after a confirm, because git drops that remote's branches with it. Push already sends a new branch to `origin`.
 
-Built: the branch name in the bar opens the switcher, and the Branches review lost its New branch button. A remote-only branch always checks out with `--track` and the full ref, so there is no guessing and no clash with a local branch named `<remote>/<branch>`. The switcher shows ten branches and how many more match, highlights the first match rather than the new branch, and offers no new branch for a name with spaces. The current branch is listed, and picking it only closes the switcher. Fetch and Remotes sit in the switcher's footer, since the bar already overflows (step 4f). Fetch is offered only with a remote. The Branches review selects the current branch when it opens, and moves to the branch switched to, from the app or a terminal. An empty name field means `origin` unless a remote has that name. Adding doesn't fetch. Not handled: a remote named with a leading `-` can be added, and then breaks fetching every remote.
+Built: the branch name in the bar opens the switcher, and the Branches review lost its New branch button. A remote-only branch always checks out with `--track` and the full ref, so there is no guessing and no clash with a local branch named `<remote>/<branch>`. The switcher shows ten branches and how many more match, highlights the first match rather than the new branch, and offers no new branch for a name with spaces. The current branch is listed, and picking it only closes the switcher. Fetch and Remotes sit in the switcher's footer, since the bar already overflows (step 4g). Fetch is offered only with a remote. The Branches review selects the current branch when it opens, and moves to the branch switched to, from the app or a terminal. An empty name field means `origin` unless a remote has that name. Adding doesn't fetch. Not handled: a remote named with a leading `-` can be added, and then breaks fetching every remote.
 
 Tasks:
 
@@ -181,7 +181,38 @@ Tasks:
 - [x] Fetch, on Ctrl+Shift+F
 - [x] Add and remove remotes from a dialog
 
-### Step 4e: Pull requests
+### Step 4e: Bar and Comments page
+
+The bar mixed reviews with something that isn't one, and named its actions badly. The Comments tab showed one comment at a time, inside a review's diff, beside a file tree that meant nothing there.
+
+Bar:
+
+- **Reviews in the order of their reach**: Staging, Changes, Branches, Commits, Stashes. Staging is part of Changes, which is part of the branch. Commits splits the branch into pieces, and stashes sit off to the side. Staging is the default, on start and on switching repositories.
+- **Comments leaves the segmented control**, since it compares nothing. It becomes a button on the right with the open count. While the page is open no segment is selected; a segment, or the button again, goes back to a review. The control also gets much narrower, as every segment is as wide as the widest label, which was "Comments (n)".
+- **Icons on the right, with tooltips and shortcuts**: Commit, Pull and Push. Pull and Push keep their counts beside the icon, the only thing on them worth reading. Commit, the main action of the Staging workflow and so far only in the palette, gets a label too, so it reads as the main action. Our own SVG icons, as Rune has none for git.
+- **Refresh leaves the bar.** The watcher refreshes by itself, and the palette keeps Refresh. The watcher's error message must point there.
+
+Comments page:
+
+- **One sheet in place of the panel and the diff**: a `DiffView` with an entry per comment, open first, then outdated, then resolved. Rows are keyed by position, so entries can share a path, and the real path keeps syntax highlighting.
+- **Each entry shows the code it was written on**: a snippet of the diff with context above and below, and the comment card under its last line, the same card as in the diff. The header has the location, review and badges, with Copy and Show in diff. Show in diff opens its review at the comment.
+- **Snippets are saved with the comment**, when it is written. They need no git and no file reads, and outdated comments still show what they were about. A snippet is what was commented on, so its line numbers can differ from the header's location once the code moves, as on GitHub. Comments written before this have no snippet and show only their lines.
+- **Resolved comments start collapsed**, through `DiffView`'s chevron. Rebuilding the entries resets that, so keep what the reader opened or closed.
+- **Copy all skips outdated comments**, and its label counts what it copies: "Copy 3 open comments". A single comment, outdated or not, copies from its own header. "Copy prompt" goes everywhere, palette included.
+- To check: a whole-file comment has no lines; it needs a sensible entry.
+
+Unified or Split becomes one setting for every diff, kept across restarts. That is app state beside the recent repositories: update the invariant when it lands.
+
+Tasks:
+
+- [ ] Reorder the reviews, Staging first and the default
+- [ ] Comments as a button on the right of the bar, and icons for Commit, Pull and Push; Refresh only in the palette
+- [ ] Unified or Split as one setting for every diff, kept across restarts
+- [ ] Save a snippet of the diff with each new comment
+- [ ] Comments page: every comment with its snippet, open, outdated, then resolved, resolved collapsed
+- [ ] Copy one comment, and copy every open comment that isn't outdated
+
+### Step 4f: Pull requests
 
 Match a branch to its pull request, and open one, on GitHub and on Forgejo or Gitea. Reviewing a pull request in the app comes later.
 
@@ -197,7 +228,7 @@ Tasks:
 - [ ] Open a pull request for a branch, in the browser
 - [ ] Show a branch's pull request on GitHub, and open it in the browser
 
-### Step 4f: UI refinements
+### Step 4g: UI refinements
 
 Peter dislikes the always-visible top panel. A left sidebar is doubtful too, because side-by-side diffs need the width, so moving the panel to the side is unlikely to be the fix. lazygit's layout is not a reference.
 
@@ -211,7 +242,7 @@ Tasks:
 - [ ] Stop new files wasting half of the split view (may need a Rune issue)
 - [ ] Decide what picking the default branch should show (it's empty today)
 
-### Step 4g: Hotkeys
+### Step 4h: Hotkeys
 
 Hotkeys go in once the layout settles, so they're assigned once. Give the frequent actions a key, then add an overlay that lists every key, grouped as the palette groups its commands.
 
