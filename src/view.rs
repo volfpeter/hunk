@@ -2,7 +2,7 @@
 
 use rune::{Color, Cx, El, Icon, ScrollSpec, TextEdit, TextStyle, Tx, col, icon, row, text};
 use rune::{Key, KeyEvent, Mods};
-use rune_kit::diff::{Annotation, DiffMode, DiffView};
+use rune_kit::diff::{Annotation, DiffMode, DiffView, FoldRow};
 use rune_kit::{Badge, Button, ButtonVariant, ControlSize, Dialog, FileNode, IconButton, IconButtonVariant, Kit, RadioGroup, RadioItem, SegmentedControl, Spinner, TextArea, TextInput, Toast, ToastRegion, Tree, TreeItem, TreeModel, TreeStyle, root};
 
 use crate::action::{Action, Stashed};
@@ -494,6 +494,7 @@ fn main(s: &State, k: &Kit) -> El {
     }
     let (annotation_kit, header_kit) = (k.clone(), k.clone());
     let diff = DiffView::new(|s: &State| &s.diff, |s: &mut State| &mut s.diff)
+        .fold_row(FoldRow::LineInfo)
         .on_visible_file(State::follow_visible_file)
         .on_comment(|s: &mut State, lines, _| s.compose_on_lines(lines))
         .annotation(move |s: &State, annotation: &Annotation| annotated(s, &annotation_kit, annotation))
@@ -580,6 +581,7 @@ fn comments_page(s: &State, k: &Kit) -> El {
     let (annotation_kit, header_kit) = (k.clone(), k.clone());
     let entries = DiffView::new(|s: &State| &s.comment_sheet, |s: &mut State| &mut s.comment_sheet)
         .key("comment-sheet")
+        .fold_row(FoldRow::LineInfo)
         .annotation(move |s: &State, annotation: &Annotation| match annotation.id.parse().ok().and_then(|id| s.comments.get(id)) {
             Some(comment) => note(&annotation_kit, comment_card(s, &annotation_kit, comment, CardPlace::Snippet)),
             None => col(),
