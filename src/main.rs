@@ -8,6 +8,7 @@ mod open;
 mod overview;
 mod recent;
 mod review;
+mod switcher;
 mod view;
 mod watch;
 

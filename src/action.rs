@@ -19,14 +19,20 @@ pub enum Action {
     /// Stages everything, then commits it.
     CommitAll(String),
     Checkout(String),
+    /// Checks out `branch` of `remote` as a local branch tracking it.
+    Track { remote: String, branch: String },
     CreateBranch(String),
     /// Puts changes aside, named `name` unless it is empty.
     Stash { name: String, takes: Stashed },
     ApplyStash(String),
     PopStash(String),
     DropStash(String),
+    /// Fetches every remote, dropping what each no longer has.
+    Fetch,
     Pull,
     Push,
+    AddRemote { name: String, url: String },
+    RemoveRemote(String),
 }
 
 /// What a stash takes.
@@ -50,14 +56,17 @@ impl Action {
             Action::UnstageAll => "Unstage all",
             Action::DiscardChanges(_) | Action::DiscardUnstaged(_) => "Discard",
             Action::Commit(_) | Action::CommitAll(_) => "Commit",
-            Action::Checkout(_) => "Check out",
+            Action::Checkout(_) | Action::Track { .. } => "Check out",
             Action::CreateBranch(_) => "New branch",
             Action::Stash { .. } => "Stash",
             Action::ApplyStash(_) => "Apply",
             Action::PopStash(_) => "Pop",
             Action::DropStash(_) => "Drop",
+            Action::Fetch => "Fetch",
             Action::Pull => "Pull",
             Action::Push => "Push",
+            Action::AddRemote { .. } => "Add remote",
+            Action::RemoveRemote(_) => "Remove remote",
         }
     }
 
@@ -67,14 +76,17 @@ impl Action {
             Action::Stage(_) | Action::Unstage(_) | Action::StageAll | Action::UnstageAll => return None,
             Action::DiscardChanges(_) | Action::DiscardUnstaged(_) => "Discarded changes",
             Action::Commit(_) | Action::CommitAll(_) => "Committed",
-            Action::Checkout(branch) => return Some(format!("Switched to {branch}")),
+            Action::Checkout(branch) | Action::Track { branch, .. } => return Some(format!("Switched to {branch}")),
             Action::CreateBranch(name) => return Some(format!("Created and switched to {name}")),
             Action::Stash { .. } => "Stashed",
             Action::ApplyStash(_) => "Applied the stash",
             Action::PopStash(_) => "Popped the stash",
             Action::DropStash(_) => "Dropped the stash",
+            Action::Fetch => "Fetched",
             Action::Pull => "Pulled",
             Action::Push => "Pushed",
+            Action::AddRemote { name, .. } => return Some(format!("Added remote {name}")),
+            Action::RemoveRemote(name) => return Some(format!("Removed remote {name}")),
         };
         Some(said.to_owned())
     }
@@ -90,13 +102,18 @@ impl Action {
             Action::Commit(message) => repo.run(&["commit", "-m", message]).map(drop),
             Action::CommitAll(message) => Action::StageAll.run(repo).and_then(|()| Action::Commit(message.clone()).run(repo)),
             Action::Checkout(branch) => repo.run(&["switch", branch]).map(drop),
+            // The full ref, as a local branch may be called `<remote>/<branch>` too.
+            Action::Track { remote, branch } => repo.run(&["switch", "-c", branch, "--track", &format!("refs/remotes/{remote}/{branch}")]).map(drop),
             Action::CreateBranch(name) => repo.run(&["switch", "-c", name]).map(drop),
             Action::Stash { name, takes } => stash(repo, name, *takes),
             Action::ApplyStash(stash) => repo.run(&["stash", "apply", &stash_commit(repo, stash)?]).map(drop),
             Action::PopStash(stash) => repo.run(&["stash", "pop", &stash_ref(repo, stash)?]).map(drop),
             Action::DropStash(stash) => repo.run(&["stash", "drop", &stash_ref(repo, stash)?]).map(drop),
+            Action::Fetch => repo.run(&["fetch", "--all", "--prune"]).map(drop),
             Action::Pull => repo.run(&["pull"]).map(drop),
             Action::Push => push(repo),
+            Action::AddRemote { name, url } => repo.run(&["remote", "add", "--", name, url]).map(drop),
+            Action::RemoveRemote(name) => repo.run(&["remote", "remove", name]).map(drop),
         }
     }
 }
@@ -313,6 +330,28 @@ mod tests {
 
         Action::Checkout("main".into()).run(&fixture.repo).unwrap();
         assert_eq!(head(), "main");
+    }
+
+    #[test]
+    fn fetching_drops_what_a_remote_no_longer_has_and_tracking_checks_it_out() {
+        let origin = Fixture::new();
+        origin.commit("a.txt", "one\n", "first");
+        origin.git(&["branch", "user/feature"]);
+        origin.git(&["branch", "gone"]);
+        let clone = Fixture::new();
+        let url = origin.repo.root().to_str().unwrap().to_owned();
+        Action::AddRemote { name: "origin".into(), url }.run(&clone.repo).unwrap();
+        Action::Fetch.run(&clone.repo).unwrap();
+        origin.git(&["branch", "-q", "-D", "gone"]);
+
+        Action::Fetch.run(&clone.repo).unwrap();
+
+        assert_eq!(clone.git(&["for-each-ref", "--format=%(refname:lstrip=2)", "refs/remotes"]), "origin/HEAD\norigin/main\norigin/user/feature\n");
+        Action::Track { remote: "origin".into(), branch: "user/feature".into() }.run(&clone.repo).unwrap();
+        assert_eq!(clone.git(&["rev-parse", "--abbrev-ref", "HEAD", "@{upstream}"]), "user/feature\norigin/user/feature\n");
+
+        Action::RemoveRemote("origin".into()).run(&clone.repo).unwrap();
+        assert_eq!(clone.git(&["remote"]), "");
     }
 
     fn stash(fixture: &Fixture, takes: Stashed) {

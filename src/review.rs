@@ -10,6 +10,8 @@ const WHOLE_FILE: &str = "--unified=100000000";
 
 /// Lines kept around each change in a folded diff, as `git diff` keeps by default.
 const CONTEXT: u32 = 3;
+/// Separates fields in git's formatted output.
+const FIELD: char = '\x1f';
 
 /// A comparison, as a patch of what changed between its two points.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -36,15 +38,42 @@ pub struct Loaded {
 }
 
 impl Review {
-    /// The two points being compared, for people.
-    pub fn title(&self) -> String {
+    /// What the local branch `branch` added since it left the branch it most likely grew from:
+    /// of the other local branches and `fallback`, the one it has the fewest commits beyond. Ties
+    /// go to `fallback`, then to the branch fewest commits ahead. Branches that grew from
+    /// `branch` don't count.
+    pub fn of_branch(repo: &Repo, branch: &str, fallback: &str) -> Result<Review> {
+        let tip = format!("refs/heads/{branch}");
+        let counts = repo.run(&["rev-list", "--left-right", "--count", &format!("{fallback}...{tip}")])?;
+        let fallback_counts = ahead_and_beyond(&counts).ok_or_else(|| GitError::new(format!("unexpected rev-list output: {counts}")))?;
+        let format = format!("--format=%(refname:short)%1f%(ahead-behind:{tip})");
+        let refs = repo.run(&["for-each-ref", &format, "refs/heads"])?;
+        let others = refs.lines().filter_map(|line| {
+            let (name, counts) = line.split_once(FIELD)?;
+            let (ahead, beyond) = ahead_and_beyond(counts)?;
+            let grew_from_branch = beyond == 0 && ahead > 0;
+            (name != branch && !grew_from_branch).then_some((beyond, true, ahead, name))
+        });
+        let (fallback_ahead, fallback_beyond) = fallback_counts;
+        let candidates = others.chain([(fallback_beyond, false, fallback_ahead, fallback)]);
+        let (_, _, _, base) = candidates.min().expect("the fallback is always a candidate");
+        Ok(Review::Branch { base: base.to_owned(), branch: branch.to_owned() })
+    }
+
+    /// The two points being compared, for people, the older first.
+    pub fn sides(&self) -> (String, String) {
         match self {
-            Review::Changes => "HEAD → working tree".to_owned(),
-            Review::Unstaged => "Staged → working tree".to_owned(),
-            Review::Commit(commit) => format!("{commit}^ → {commit}"),
-            Review::Branch { base, branch } => format!("{base} → {branch}"),
-            Review::Stash(stash) => stash.clone(),
+            Review::Changes => ("HEAD".to_owned(), "working tree".to_owned()),
+            Review::Unstaged => ("Staged".to_owned(), "working tree".to_owned()),
+            Review::Commit(commit) | Review::Stash(commit) => (format!("{commit}^"), commit.clone()),
+            Review::Branch { base, branch } => (base.clone(), branch.clone()),
         }
+    }
+
+    /// [`Review::sides`] as one line.
+    pub fn title(&self) -> String {
+        let (old, new) = self.sides();
+        format!("{old} vs {new}")
     }
 
     pub fn load(self, repo: &Repo) -> Result<Loaded> {
@@ -90,6 +119,12 @@ impl Review {
             Review::Stash(stash) => repo.run(&["stash", "show", "--no-ext-diff", WHOLE_FILE, "--patch", "--include-untracked", &stash_commit(repo, stash)?]),
         }
     }
+}
+
+/// Commits another point has that a branch lacks, and the other way round, from two counts.
+fn ahead_and_beyond(counts: &str) -> Option<(u32, u32)> {
+    let mut counts = counts.split_whitespace().map(str::parse);
+    Some((counts.next()?.ok()?, counts.next()?.ok()?))
 }
 
 /// The files of a [`Review::patch`], folded to [`CONTEXT`] lines around each change, with every
@@ -217,6 +252,32 @@ mod tests {
         fixture.commit("main.txt", "three\n", "moved on");
         let review = Review::Branch { base: "main".into(), branch: "feature".into() };
         assert_eq!(paths(&review.patch(&fixture.repo).unwrap()), ["feature.txt"]);
+    }
+
+    #[test]
+    fn a_branch_is_compared_with_the_branch_it_grew_from() {
+        let fixture = Fixture::new();
+        fixture.commit("a.txt", "one\n", "first");
+        fixture.git(&["branch", "old"]);
+        fixture.git(&["checkout", "-q", "-b", "feature"]);
+        fixture.commit("b.txt", "two\n", "feature");
+        fixture.commit("c.txt", "three\n", "more feature");
+        fixture.git(&["checkout", "-q", "-b", "agent"]);
+        fixture.commit("d.txt", "four\n", "agent");
+        fixture.git(&["checkout", "-q", "-b", "fresh", "main"]);
+        fixture.git(&["checkout", "-q", "main"]);
+        fixture.commit("m.txt", "moved\n", "main moved on");
+        let base = |branch: &str| match Review::of_branch(&fixture.repo, branch, "main").unwrap() {
+            Review::Branch { base, .. } => base,
+            review => panic!("{review:?}"),
+        };
+
+        assert_eq!(base("agent"), "feature");
+        assert_eq!(base("feature"), "main", "agent grew from feature, and old ties with main");
+        assert_eq!(base("fresh"), "main", "fresh has nothing beyond old or main, and ties go to main");
+
+        fixture.git(&["merge", "-q", "--no-ff", "-m", "merge", "feature"]);
+        assert_eq!(base("feature"), "main", "main took feature in");
     }
 
     #[test]

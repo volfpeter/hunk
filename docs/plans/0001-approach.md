@@ -1,6 +1,6 @@
 # 0001: Approach
 
-Status: step 4c done, waiting for Peter's UI review. See [Tasks](#tasks).
+Status: step 4d done, waiting for Peter's UI review. See [Tasks](#tasks).
 
 ## Intent
 
@@ -17,7 +17,7 @@ A **Review** is a comparison between two points. There are five:
 | Changes            | `HEAD` vs worktree, with untracked files         |
 | Staging            | index vs worktree, with untracked files          |
 | Commit             | first parent vs commit                           |
-| Branch             | merge-base with the default branch vs branch tip |
+| Branch             | merge-base with its parent vs branch tip         |
 | Stash              | its parent vs the stash                          |
 
 A pull request will be a sixth: same comparison as a branch, with comments going to the forge.
@@ -46,6 +46,7 @@ Side-by-side diffs need the width, so nothing sits beside the diff. A bar picks 
 - **One file order, by path.** The file list's, folders first, and the diff follows it.
 - **`dirs` for app folders.** Small, and knows each platform's places.
 - **Patches carry each file whole, and Rune folds them.** So every fold opens without reading files, and git still makes the diff. Parsing whole files costs the UI thread, felt only on huge ones.
+- **A branch is compared with its parent**, the other local branch it has the fewest commits beyond, or the default branch, which also wins ties. The default branch is the local one named after `origin`'s, so `origin/` shows only when there is no such local branch: it read like a branch prefix. A local default branch that is behind `origin` can pull its missing commits into the diff, which pulling fixes. Every diff's title sets its two points apart with an icon of two opposite arrows, older first, as an arrow from a base to its branch read like a hierarchy. Git doesn't record which branch another grew from, and guessing beats bookkeeping that misses branches made outside the app. Comparing with the default branch mixed a stacked branch's parent into it. The diff's title names the base, so a wrong guess shows.
 - **Comments go to agents first.** Each stores path, side, line range and commit, enough to submit to a forge later. No destination abstraction until then.
 
 ## Tasks
@@ -120,7 +121,7 @@ Tasks:
 - [x] Switch the review kind from the palette
 - [x] Stage and unstage everything from the palette
 
-### Step 4b: Commit and stash
+### DONE - Step 4b: Commit and stash
 
 Staging is the review Peter finds most useful, since staging takes what he has reviewed out of the way. But it hides what is staged, so he can't see what a commit would take. The message box above the diff, with Commit and Stash below it, goes: both become dialogs.
 
@@ -141,7 +142,7 @@ Tasks:
 - [x] Commit from a dialog, replacing the message box and its buttons
 - [x] Stash from a dialog: name the stash and pick what goes: tracked changes, those and new files, or only what's staged
 
-### Step 4c: Open a repository
+### DONE - Step 4c: Open a repository
 
 Switching repositories is the hard part: comments, the watcher, the loads and all the state belong to one repository. Refactor for it first, before more features build on the one-repository shape.
 
@@ -160,7 +161,7 @@ Tasks:
 - [x] Start as Zed does: the folder passed, else the last repository, else an empty window
 - [x] Name the repository `<user-or-org>/<project>`
 
-### Step 4d: Branches and remotes
+### DONE - Step 4d: Branches and remotes
 
 The remote side of everyday work, without a terminal: switching to a colleague's or an agent's branch, fetching, and wiring up a new repository's `origin`.
 
@@ -171,12 +172,14 @@ Keep in mind:
 - **Fetch gets every remote and prunes**, so the switcher stops offering branches that were deleted on the remote. It fails on credentials the way pull does.
 - **The remotes dialog** lists each remote with its URL. It adds a remote from a name and a URL, with the name defaulting to `origin` when there is none. It removes a remote only after a confirm, because git drops that remote's branches with it. Push already sends a new branch to `origin`.
 
+Built: the branch name in the bar opens the switcher, and the Branches review lost its New branch button. A remote-only branch always checks out with `--track` and the full ref, so there is no guessing and no clash with a local branch named `<remote>/<branch>`. The switcher shows ten branches and how many more match, highlights the first match rather than the new branch, and offers no new branch for a name with spaces. The current branch is listed, and picking it only closes the switcher. Fetch and Remotes sit in the switcher's footer, since the bar already overflows (step 4f). Fetch is offered only with a remote. The Branches review selects the current branch when it opens, and moves to the branch switched to, from the app or a terminal. An empty name field means `origin` unless a remote has that name. Adding doesn't fetch. Not handled: a remote named with a leading `-` can be added, and then breaks fetching every remote.
+
 Tasks:
 
-- [ ] Switch or create a branch from one dialog: local branches, then those only on a remote, on Ctrl+B and Ctrl+Shift+B
-- [ ] Check out a branch that only exists on a remote, tracking it
-- [ ] Fetch, on Ctrl+Shift+F
-- [ ] Add and remove remotes from a dialog
+- [x] Switch or create a branch from one dialog: local branches, then those only on a remote, on Ctrl+B and Ctrl+Shift+B
+- [x] Check out a branch that only exists on a remote, tracking it
+- [x] Fetch, on Ctrl+Shift+F
+- [x] Add and remove remotes from a dialog
 
 ### Step 4e: Pull requests
 
@@ -185,7 +188,7 @@ Match a branch to its pull request, and open one, on GitHub and on Forgejo or Gi
 Keep in mind:
 
 - **The forge comes from the remote's URL**, the same URL that step 4c parses for the repository's name. github.com means GitHub. Any other host is taken to be Forgejo or Gitea.
-- **Opening a pull request goes to the forge's own form, in the browser**: `<host>/<owner>/<repo>/compare/<base>...<branch>` on all three. It needs no auth, and templates, reviewers and labels work out of the box. An in-app dialog waits until it hurts.
+- **Opening a pull request goes to the forge's own form, in the browser**: `<host>/<owner>/<repo>/compare/<base>...<branch>` on all three. The base is the branch's parent, as the Branches review finds it, so a stacked branch's pull request shows only its own commits. It needs no auth, and templates, reviewers and labels work out of the box. An in-app dialog waits until it hurts.
 - **On GitHub, `gh` finds a branch's pull request**, with `--json` output and its own auth. That makes it a second spawned program, so it gets its own module, as git has.
 - **Forgejo and Gitea have no CLI with machine-readable output.** `fj` prints only for people and can't search by branch. Their HTTP API can (`/api/v1/repos/<owner>/<repo>/pulls`), but private repositories need a token. Decided: on Forgejo and Gitea the app only opens pull requests for now. Showing a branch's pull request there waits for an HTTP client and a token setting.
 

@@ -15,6 +15,7 @@ use crate::open::{Choice, Offer, Opened, resolve};
 use crate::overview::{Entry, FileStatus, LineCounts, Overview};
 use crate::recent::Recents;
 use crate::review::{Loaded, Review, files};
+use crate::switcher::{BranchChoice, BranchOffer};
 use crate::watch::RepoWatch;
 
 /// The id of the annotation holding the comment being written.
@@ -140,6 +141,7 @@ const COMMIT: &str = "Ctrl+Enter";
 const STASH: &str = "Ctrl+Shift+S";
 const PULL: &str = "Ctrl+Shift+↓";
 const PUSH: &str = "Ctrl+Shift+↑";
+const FETCH: &str = "Ctrl+Shift+F";
 
 /// The shortcut of the git command `event` runs. Git commands go on Ctrl+Shift, and Commit on
 /// Ctrl+Enter too, which shows as its key: Ctrl+Shift+C is the other.
@@ -151,6 +153,7 @@ fn git_shortcut(event: &KeyEvent) -> Option<&'static str> {
         Key::Up if ctrl_shift => Some(PUSH),
         _ if ctrl_shift && event.is_command('c') => Some(COMMIT),
         _ if ctrl_shift && event.is_command('s') => Some(STASH),
+        _ if ctrl_shift && event.is_command('f') => Some(FETCH),
         _ => None,
     }
 }
@@ -208,8 +211,12 @@ pub struct State {
     pub stashing: Option<Stashed>,
     pub stash_text: TextEdit,
     pub branch_text: TextEdit,
-    /// Whether the new branch dialog is open.
-    pub naming_branch: bool,
+    /// The highlighted row of the branch switcher, while it is open.
+    pub switcher: Option<usize>,
+    /// Whether the remotes dialog is open.
+    pub managing_remotes: bool,
+    pub remote_name_text: TextEdit,
+    pub remote_url_text: TextEdit,
     /// The action waiting to be confirmed.
     pub confirming: Option<Action>,
     /// What the action in the background is called.
@@ -263,7 +270,10 @@ impl State {
             stashing: None,
             stash_text: TextEdit::default(),
             branch_text: TextEdit::default(),
-            naming_branch: false,
+            switcher: None,
+            managing_remotes: false,
+            remote_name_text: TextEdit::default(),
+            remote_url_text: TextEdit::default(),
             confirming: None,
             running: None,
             action_failure: None,
@@ -354,6 +364,13 @@ impl State {
         if event.is_command('o') {
             if !self.dialog_open() {
                 self.open_opener();
+            }
+            return true;
+        }
+        // With Shift too, as an alias.
+        if event.is_command('b') {
+            if !self.dialog_open() {
+                self.open_switcher();
             }
             return true;
         }
@@ -466,10 +483,15 @@ impl State {
         self.load_review();
     }
 
-    /// Shows the entry selected in the list.
+    /// Shows the entry selected in the list. A branch picked from the list is compared with the
+    /// branch it grew from, which takes git to find.
     pub fn load_review(&mut self) {
+        let find_base = self.kind == Kind::Branches;
         match self.repo.clone().zip(self.review()) {
-            Some(request) => self.patch_load.request(request, |(repo, review)| review.load(&repo)),
+            Some(request) => self.patch_load.request(request, move |(repo, review)| match review {
+                Review::Branch { base, branch } if find_base => Review::of_branch(&repo, &branch, &base)?.load(&repo),
+                review => review.load(&repo),
+            }),
             None => {
                 self.patch_load.cancel();
                 self.shown = None;
@@ -479,8 +501,9 @@ impl State {
         }
     }
 
-    /// What is selected for review, if anything is.
-    pub fn review(&self) -> Option<Review> {
+    /// What is selected for review, if anything is. A branch from the list has the default
+    /// branch as its base, for [`Review::of_branch`] to fall back on.
+    fn review(&self) -> Option<Review> {
         let selected = || self.list.selected().next().map(str::to_owned);
         match self.kind {
             Kind::Changes => Some(Review::Changes),
@@ -639,6 +662,11 @@ impl State {
         self.action_failure = None;
     }
 
+    /// What the diff on screen compares.
+    pub fn shown_review(&self) -> Option<&Review> {
+        self.shown.as_ref().map(|shown| &shown.review)
+    }
+
     /// Whether the review on screen compares against the worktree, so its files can be changed.
     pub fn reviews_worktree(&self) -> bool {
         self.shown.as_ref().is_some_and(|shown| matches!(shown.review, Review::Changes | Review::Unstaged))
@@ -779,22 +807,90 @@ impl State {
         }
     }
 
-    pub fn start_new_branch(&mut self) {
+    /// Opens the branch switcher, offering every branch.
+    pub fn open_switcher(&mut self) {
+        self.palette = None;
         self.branch_text = TextEdit::default();
-        self.naming_branch = true;
+        self.switcher = Some(0);
         self.focus(|s| &mut s.branch_text);
     }
 
-    pub fn cancel_new_branch(&mut self) {
-        self.naming_branch = false;
+    pub fn close_switcher(&mut self) {
+        self.switcher = None;
     }
 
-    pub fn create_branch(&mut self) {
-        let name = self.branch_text.text.trim().to_owned();
-        if !name.is_empty() {
-            self.naming_branch = false;
-            self.run(Action::CreateBranch(name));
+    /// What the branch switcher offers for the name typed.
+    pub fn branch_offer(&self) -> BranchOffer {
+        BranchOffer::new(&self.branch_text.text, &self.overview.branches, &self.overview.remote_branches)
+    }
+
+    /// Moves the branch switcher's highlight by `rows`, stopping at the ends.
+    pub fn move_switcher(&mut self, rows: isize) {
+        let last = self.branch_offer().choices.len().saturating_sub(1);
+        self.switcher = self.switcher.map(|active| active.saturating_add_signed(rows).min(last));
+    }
+
+    /// Switches to what row `row` of the branch switcher offers, creating it first if it is new,
+    /// and closes the switcher. It stays open while an action runs, which would refuse the switch.
+    pub fn pick_branch(&mut self, row: usize) {
+        if self.running.is_some() {
+            return;
         }
+        let Some(choice) = self.branch_offer().choices.into_iter().nth(row) else { return };
+        self.close_switcher();
+        match choice {
+            BranchChoice::Local(branch) if branch.id == self.overview.head => {}
+            BranchChoice::Local(branch) => self.run(Action::Checkout(branch.id)),
+            BranchChoice::Remote(branch) => self.run(Action::Track { remote: branch.remote, branch: branch.name }),
+            BranchChoice::Create(name) => self.run(Action::CreateBranch(name)),
+        }
+    }
+
+    pub fn can_fetch(&self) -> bool {
+        self.running.is_none() && !self.overview.remotes.is_empty()
+    }
+
+    /// Opens the remotes dialog, with nothing typed.
+    pub fn open_remotes(&mut self) {
+        self.close_switcher();
+        self.palette = None;
+        self.remote_name_text = TextEdit::default();
+        self.remote_url_text = TextEdit::default();
+        self.managing_remotes = true;
+        self.focus(|s| &mut s.remote_url_text);
+    }
+
+    pub fn close_remotes(&mut self) {
+        self.managing_remotes = false;
+    }
+
+    /// The name a remote gets when none is typed: `origin`, unless a remote has it.
+    pub fn default_remote_name(&self) -> Option<&'static str> {
+        (!self.overview.remotes.iter().any(|remote| remote.name == "origin")).then_some("origin")
+    }
+
+    /// The remote to add, once it has a name and a URL.
+    fn remote_to_add(&self) -> Option<Action> {
+        let typed = self.remote_name_text.text.trim();
+        let name = if typed.is_empty() { self.default_remote_name()? } else { typed };
+        let url = self.remote_url_text.text.trim();
+        (!url.is_empty()).then(|| Action::AddRemote { name: name.to_owned(), url: url.to_owned() })
+    }
+
+    pub fn can_add_remote(&self) -> bool {
+        self.running.is_none() && self.remote_to_add().is_some()
+    }
+
+    /// Adds the remote typed, keeping the dialog open to show it.
+    pub fn add_remote(&mut self) {
+        if let Some(action) = self.remote_to_add().filter(|_| self.can_add_remote()) {
+            self.run(action);
+        }
+    }
+
+    /// Removes the remote `name`, once confirmed.
+    pub fn ask_to_remove_remote(&mut self, name: &str) {
+        self.confirming = Some(Action::RemoveRemote(name.to_owned()));
     }
 
     /// The stash selected in the list.
@@ -891,8 +987,13 @@ impl State {
         self.running = None;
         match result {
             Ok(()) => {
-                if matches!(action, Action::Commit(_) | Action::CommitAll(_)) {
-                    self.commit_text = TextEdit::default();
+                match action {
+                    Action::Commit(_) | Action::CommitAll(_) => self.commit_text = TextEdit::default(),
+                    Action::AddRemote { .. } => {
+                        self.remote_name_text = TextEdit::default();
+                        self.remote_url_text = TextEdit::default();
+                    }
+                    _ => {}
                 }
                 if let Some(outcome) = action.outcome() {
                     self.outcome.show(outcome);
@@ -952,9 +1053,11 @@ impl State {
         if let Some(branch) = self.branch_to_check_out() {
             offer(idle, Command::new("Git", format!("Check out {branch}"), |s, _| s.check_out_selected()));
         }
-        offer(idle, Command::new("Git", "New branch", |s, _| s.start_new_branch()));
+        offer(true, Command::new("Git", "Switch branch", |s, _| s.open_switcher()).shortcut("Ctrl+B"));
+        offer(self.can_fetch(), Command::new("Git", "Fetch", |s, _| s.run(Action::Fetch)).shortcut(FETCH));
         offer(idle, Command::new("Git", "Pull", |s, _| s.run(Action::Pull)).shortcut(PULL));
         offer(self.can_push(), Command::new("Git", "Push", |s, _| s.run(Action::Push)).shortcut(PUSH));
+        offer(true, Command::new("Git", "Remotes", |s, _| s.open_remotes()));
         offer(true, Command::new("Git", "Refresh", |s, _| s.refresh()));
 
         offer(!self.comments.open().is_empty(), Command::new("Comments", "Copy prompt", State::copy_prompt));
@@ -977,7 +1080,9 @@ impl State {
     }
 
     fn dialog_open(&self) -> bool {
-        self.deleting.is_some() || self.confirming.is_some() || self.naming_branch || self.committing || self.stashing.is_some() || self.action_failure.is_some() || self.shell.opener.is_some()
+        let pickers = self.switcher.is_some() || self.shell.opener.is_some();
+        let dialogs = self.deleting.is_some() || self.confirming.is_some() || self.committing || self.stashing.is_some() || self.managing_remotes || self.action_failure.is_some();
+        pickers || dialogs
     }
 
     /// The folder highlighted in the open dialog.
@@ -1021,7 +1126,8 @@ impl State {
 
     /// Gives the keyboard to one text field, which takes it from every other.
     fn focus(&mut self, field: fn(&mut State) -> &mut TextEdit) {
-        for text in [&mut self.draft_text, &mut self.edit_text, &mut self.commit_text, &mut self.stash_text, &mut self.branch_text, &mut self.palette_text, &mut self.shell.open_text] {
+        let fields = [&mut self.draft_text, &mut self.edit_text, &mut self.commit_text, &mut self.stash_text, &mut self.branch_text, &mut self.remote_name_text, &mut self.remote_url_text, &mut self.palette_text, &mut self.shell.open_text];
+        for text in fields {
             text.focused = false;
         }
         field(self).focused = true;
@@ -1030,9 +1136,14 @@ impl State {
     fn show_overview(&mut self, overview: Result<Overview>) {
         match overview {
             Ok(overview) => {
+                let switched = overview.head != self.overview.head;
                 self.overview = overview;
                 self.error = None;
                 self.rebuild_list();
+                // The branch switched to takes over the review, as long as it is a branch.
+                if switched && self.kind == Kind::Branches && self.list.contains(&self.overview.head) {
+                    self.list.select(&self.overview.head);
+                }
                 self.build_file_lists();
                 self.load_review();
             }
@@ -1154,7 +1265,7 @@ impl State {
     }
 
     /// Fills the list for the current kind, keeping the selection while it still exists and
-    /// otherwise selecting the first entry.
+    /// otherwise selecting the current branch among branches, else the first entry.
     fn rebuild_list(&mut self) {
         let kept = self.list.selected().next().map(str::to_owned);
         let comments: Vec<Entry>;
@@ -1172,7 +1283,8 @@ impl State {
         for entry in entries {
             self.list.insert(None, entry.id.clone(), entry.clone());
         }
-        let selected = kept.filter(|id| self.list.contains(id)).or_else(|| entries.first().map(|entry| entry.id.clone()));
+        let current = entries.iter().find(|entry| self.kind == Kind::Branches && entry.id == self.overview.head);
+        let selected = kept.filter(|id| self.list.contains(id)).or_else(|| current.or(entries.first()).map(|entry| entry.id.clone()));
         if let Some(id) = selected {
             self.list.select(&id);
         }
@@ -1463,8 +1575,8 @@ mod tests {
     fn the_palette_filters_by_every_word_typed_and_stays_on_its_rows() {
         let (_fixture, mut state) = state();
         state.open_palette();
-        state.palette_text = TextEdit::new("BRANCH new".to_owned());
-        assert_eq!(state.palette_commands().iter().map(|command| command.label.as_str()).collect::<Vec<_>>(), ["New branch"]);
+        state.palette_text = TextEdit::new("BRANCH sw".to_owned());
+        assert_eq!(state.palette_commands().iter().map(|command| command.label.as_str()).collect::<Vec<_>>(), ["Switch branch"]);
 
         state.move_palette(5);
         assert_eq!(state.palette, Some(0));
@@ -1472,7 +1584,7 @@ mod tests {
         assert_eq!(state.palette, Some(0));
 
         state.run_command(0, &mut Tx::default());
-        assert_eq!((state.palette, state.naming_branch), (None, true));
+        assert_eq!((state.palette, state.switcher), (None, Some(0)));
     }
 
     #[test]
@@ -1571,10 +1683,62 @@ mod tests {
     }
 
     #[test]
-    fn the_branch_picked_can_be_checked_out_unless_it_is_the_current_one() {
+    fn the_switcher_closes_on_the_current_branch_and_waits_out_a_running_action() {
         let (_fixture, mut state) = state();
         state.overview.head = "main".to_owned();
-        state.overview.branches = ["main", "feature"].map(|name| Entry { id: name.to_owned(), title: name.to_owned(), detail: String::new() }).to_vec();
+        state.overview.branches = vec![Entry { id: "main".to_owned(), title: "main".to_owned(), detail: String::new() }];
+        state.overview.remote_branches = vec![crate::overview::RemoteBranch { remote: "origin".into(), name: "feature".into(), age: String::new() }];
+
+        state.on_key(&KeyEvent { key: Key::Command('b'), mods: rune::Mods { ctrl: true, cmd: true, shift: true, ..rune::Mods::default() } }, &mut Tx::default());
+        state.pick_branch(0);
+        assert_eq!((state.switcher, state.running), (None, None));
+
+        state.open_switcher();
+        state.running = Some("Fetch");
+        state.pick_branch(1);
+        assert_eq!(state.switcher, Some(0));
+
+        state.running = None;
+        state.pick_branch(1);
+        assert_eq!((state.switcher, state.running), (None, Some("Check out")));
+    }
+
+    #[test]
+    fn the_branches_review_follows_a_switch_of_branch() {
+        let (_fixture, mut state) = state();
+        let branches = ["main", "feature", "other"].map(|name| Entry { id: name.to_owned(), title: name.to_owned(), detail: String::new() }).to_vec();
+        let on = |head: &str| Overview { head: head.to_owned(), branches: branches.clone(), ..Overview::default() };
+        state.show_overview(Ok(on("main")));
+        state.select_kind(Kind::Branches);
+        state.list.select("feature");
+
+        state.show_overview(Ok(on("main")));
+        assert_eq!(state.list.selected().next(), Some("feature"), "no switch, so the pick stays");
+
+        state.show_overview(Ok(on("other")));
+        assert_eq!(state.list.selected().next(), Some("other"));
+
+        state.show_overview(Ok(on("abc1234")));
+        assert_eq!(state.list.selected().next(), Some("other"), "a detached head is no branch to show");
+    }
+
+    #[test]
+    fn a_remote_is_named_origin_unless_one_is() {
+        let (_fixture, mut state) = state();
+        state.remote_url_text = TextEdit::new("git@host.example:me/thing.git".to_owned());
+        assert_eq!(state.remote_to_add(), Some(Action::AddRemote { name: "origin".into(), url: "git@host.example:me/thing.git".into() }));
+
+        state.overview.remotes = vec![crate::overview::Remote { name: "origin".into(), url: "elsewhere".into() }];
+        assert_eq!(state.remote_to_add(), None);
+        state.remote_name_text = TextEdit::new(" fork ".to_owned());
+        assert_eq!(state.remote_to_add(), Some(Action::AddRemote { name: "fork".into(), url: "git@host.example:me/thing.git".into() }));
+    }
+
+    #[test]
+    fn the_current_branch_is_picked_first_and_any_other_can_be_checked_out() {
+        let (_fixture, mut state) = state();
+        state.overview.head = "main".to_owned();
+        state.overview.branches = ["feature", "main"].map(|name| Entry { id: name.to_owned(), title: name.to_owned(), detail: String::new() }).to_vec();
         state.select_kind(Kind::Branches);
         assert_eq!(state.branch_to_check_out(), None);
 

@@ -1,6 +1,6 @@
 //! The window: a bar to pick what to review, the lists behind that choice, and the diff.
 
-use rune::{Cx, El, ScrollSpec, TextEdit, Tx, col, row, text};
+use rune::{Cx, El, Icon, ScrollSpec, TextEdit, Tx, col, icon, row, text};
 use rune::{Key, KeyEvent, Mods};
 use rune_kit::diff::{Annotation, DiffMode, DiffView};
 use rune_kit::{Badge, Button, ButtonVariant, ControlSize, Dialog, FileNode, Kit, RadioGroup, RadioItem, SegmentedControl, Spinner, TextArea, TextInput, Toast, ToastRegion, Tree, TreeItem, TreeModel, TreeStyle, root};
@@ -10,6 +10,8 @@ use crate::app::{Command, DRAFT_NOTE, Kind, State};
 use crate::comments::Comment;
 use crate::open::{Choice, tilde};
 use crate::overview::{CommitPlan, Entry, LineCounts};
+use crate::review::Review;
+use crate::switcher::BranchChoice;
 
 const BAR_HEIGHT: f32 = 48.0;
 /// The page showing between the sheets, and around them.
@@ -18,12 +20,14 @@ const PANEL_HEIGHT: f32 = 200.0;
 const DRAFT_ROWS: (usize, usize) = (3, 12);
 const COMMIT_ROWS: usize = 4;
 const CONFIRM_WIDTH: f32 = 400.0;
+const UNDONE: &str = "This can't be undone.";
 const COMMIT_WIDTH: f32 = 800.0;
 const COMMIT_SUMMARY_WIDTH: f32 = 180.0;
 const FAILURE_WIDTH: f32 = 640.0;
 /// The most height git's output takes in a dialog before it scrolls.
 const FAILURE_MAX_HEIGHT: f32 = 320.0;
-/// Dialogs whose rows are picked with the keyboard: the palette and the open dialog.
+/// Dialogs whose rows are picked with the keyboard: the palette, the open dialog and the branch
+/// switcher.
 const PICKER_WIDTH: f32 = 560.0;
 const PICKER_ROW_HEIGHT: f32 = 32.0;
 const PICKER_MARKER_WIDTH: f32 = 12.0;
@@ -33,6 +37,14 @@ const DETAIL_MAX_WIDTH: f32 = 240.0;
 const PLACE_MAX_WIDTH: f32 = 360.0;
 /// The most width the repository's name and its branch each take from the bar.
 const HEAD_MAX_WIDTH: f32 = 160.0;
+const REMOTE_NAME_WIDTH: f32 = 140.0;
+
+/// Two points compared, neither leading to the other.
+static COMPARED: Icon = Icon {
+    name: "diffactive-compared",
+    view: 16.0,
+    body: r#"<path d="M2.5 5H13M10.5 2.5L13 5L10.5 7.5M13.5 11H3M5.5 8.5L3 11L5.5 13.5" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"/>"#,
+};
 
 /// Which text a comment field writes to and what its buttons do.
 #[derive(Clone, Copy)]
@@ -54,14 +66,16 @@ fn one_line(line: String) -> El {
 pub fn view(s: &State, cx: &mut Cx<State>) -> El {
     let k = Kit::neutral(cx.system_dark());
     let mut overlays = Vec::new();
+    // Under the confirm for removing a remote.
+    remotes_dialog(s, &k, &mut overlays);
     delete_dialog(s, &k, &mut overlays);
     action_dialog(s, &k, &mut overlays);
-    new_branch_dialog(s, &k, &mut overlays);
     commit_dialog(s, &k, &mut overlays);
     stash_dialog(s, &k, &mut overlays);
     failure_dialog(s, &k, &mut overlays);
     palette_dialog(s, &k, &mut overlays);
     open_dialog(s, &k, &mut overlays);
+    branch_dialog(s, &k, &mut overlays);
     outcome_toast(s, &k, &mut overlays);
     if !s.has_repository() {
         return root(col().fill(k.c.page).padding(SHEET_GAP).child(welcome(s, &k)), overlays);
@@ -103,18 +117,8 @@ fn bar(s: &State, k: &Kit) -> El {
     let pull = if behind > 0 { format!("Pull ↓{behind}") } else { "Pull".to_owned() };
     let push = if ahead > 0 { format!("Push ↑{ahead}") } else { "Push".to_owned() };
 
-    let name = s.repo_name();
-    let repository = Button::new(name.clone())
-        .variant(ButtonVariant::Ghost)
-        .label_with(move |font, ink| one_line(name).font(font).color(ink))
-        .help("Open another repository")
-        .shortcut("Ctrl+O")
-        .disabled(!s.can_open())
-        .on_press(State::open_opener)
-        .build(k)
-        .key("repository")
-        .max_w(HEAD_MAX_WIDTH)
-        .min_w(0.0);
+    let repository = head_button(s.repo_name(), "Open another repository", "Ctrl+O").disabled(!s.can_open()).on_press(State::open_opener);
+    let branch = head_button(s.overview.head.clone(), "Switch branch", "Ctrl+B").variant(ButtonVariant::GhostMuted).on_press(State::open_switcher);
 
     row()
         .key("bar")
@@ -123,8 +127,8 @@ fn bar(s: &State, k: &Kit) -> El {
         .px(16.0)
         .gap(12.0)
         .items_center()
-        .child(repository)
-        .child(one_line(s.overview.head.clone()).max_w(HEAD_MAX_WIDTH).font(k.ty.ui).color(k.c.text_muted))
+        .child(repository.build(k).key("repository").max_w(HEAD_MAX_WIDTH).min_w(0.0))
+        .child(branch.build(k).key("branch").max_w(HEAD_MAX_WIDTH).min_w(0.0))
         .child(kinds.build(k))
         .child(row().grow(1.0))
         .children(s.running.map(|action| progress(k, action)))
@@ -139,6 +143,11 @@ fn bar(s: &State, k: &Kit) -> El {
         .child(Button::new("Refresh").variant(ButtonVariant::Ghost).on_press(|s: &mut State| s.refresh()).build(k))
         .child(Button::new(pull).variant(ButtonVariant::Ghost).disabled(s.running.is_some()).on_press(|s: &mut State| s.run(Action::Pull)).build(k))
         .child(Button::new(push).variant(ButtonVariant::Ghost).disabled(!s.can_push()).on_press(|s: &mut State| s.run(Action::Push)).build(k))
+}
+
+/// A button in the bar naming what is on screen, cut to fit.
+fn head_button(name: String, help: &str, shortcut: &str) -> Button {
+    Button::new(name.clone()).variant(ButtonVariant::Ghost).label_with(move |font, ink| one_line(name).font(font).color(ink)).help(help).shortcut(shortcut)
 }
 
 /// Says that `action` is running.
@@ -205,9 +214,7 @@ fn comments_summary(s: &State, k: &Kit) -> El {
 
 fn branch_actions(s: &State, k: &Kit) -> El {
     let idle = s.running.is_none();
-    list_header(k, format!("On {}", s.overview.head))
-        .child(small_button("Check out").disabled(!idle || s.branch_to_check_out().is_none()).on_press(State::check_out_selected).build(k))
-        .child(small_button("New branch").disabled(!idle).on_press(State::start_new_branch).build(k))
+    list_header(k, format!("On {}", s.overview.head)).child(small_button("Check out").disabled(!idle || s.branch_to_check_out().is_none()).on_press(State::check_out_selected).build(k))
 }
 
 fn stash_actions(s: &State, k: &Kit) -> El {
@@ -305,7 +312,6 @@ fn diff_status(s: &State, k: &Kit) -> El {
         1 => "1 file".to_owned(),
         n => format!("{n} files"),
     };
-    let title = s.review().map_or_else(String::new, |review| review.title());
     let split = s.diff.mode() == DiffMode::Split;
     let modes = SegmentedControl::new(&["Unified", "Split"], Some(split as usize)).fit().on_pick(|s: &mut State, i, tx: &mut Tx| {
         tx.motion(rune::tok::motion::SNAPPY);
@@ -317,11 +323,26 @@ fn diff_status(s: &State, k: &Kit) -> El {
         .px(12.0)
         .py(6.0)
         .items_center()
-        .child(one_line(title).font(k.ty.ui_medium).color(k.c.text_base))
+        .children(s.shown_review().map(|review| compared(k, review)))
         .child(one_line(format!("{count}  +{added} −{removed}")).font(k.ty.ui).color(k.c.text_muted))
         .child(row().grow(1.0))
         .child(modes.build(k));
     col().key("diff-status").w_full().child(status).child(row().w_full().h(1.0).fill(k.c.border_weak))
+}
+
+/// The two points `review` compares, set apart by an icon.
+fn compared(k: &Kit, review: &Review) -> El {
+    let name = |name: String| one_line(name).font(k.ty.ui_medium).color(k.c.text_base);
+    let (old, new) = review.sides();
+    row()
+        .label(review.title())
+        .gap(6.0)
+        .items_center()
+        .shrink()
+        .min_w(0.0)
+        .child(name(old).max_w(DETAIL_MAX_WIDTH))
+        .child(icon(&COMPARED, 14.0).color(k.c.text_muted).a11y_hidden())
+        .child(name(new))
 }
 
 fn error_line(k: &Kit, error: &str) -> El {
@@ -452,7 +473,7 @@ fn comment_actions(k: &Kit, comment: &Comment, edit: Button) -> El {
 fn delete_dialog(s: &State, k: &Kit, overlays: &mut Vec<El>) {
     let Some(comment) = s.deleting.and_then(|id| s.comments.get(id)) else { return };
     let location = text(comment.anchor.location()).font(k.ty.ui).color(k.c.text_base).wrap_anywhere();
-    confirm_dialog(k, overlays, Dialog::new("delete-comment", "Delete comment?"), location, "Delete", State::confirm_delete, State::cancel_delete);
+    confirm_dialog(k, overlays, Dialog::new("delete-comment", "Delete comment?").description(UNDONE), location, "Delete", State::confirm_delete, State::cancel_delete);
 }
 
 /// Asks before an action that can't be taken back.
@@ -462,14 +483,18 @@ fn action_dialog(s: &State, k: &Kit, overlays: &mut Vec<El>) {
         Action::DiscardChanges(paths) => ("Discard changes?", paths.join("\n"), "Everything not committed in this file is lost."),
         Action::DiscardUnstaged(paths) => ("Discard changes?", paths.join("\n"), "Everything not staged in this file is lost."),
         Action::DropStash(stash) => ("Drop stash?", stash.clone(), "The changes it holds are lost."),
+        Action::RemoveRemote(name) => ("Remove remote?", name.clone(), "Its branches go from here too, and local branches stop tracking them."),
         _ => return,
     };
+    let dialog = Dialog::new("confirm-action", title);
+    // Adding a remote again and fetching brings its branches back.
+    let dialog = if matches!(action, Action::RemoveRemote(_)) { dialog } else { dialog.description(UNDONE) };
     let body = col()
         .w_full()
         .gap(8.0)
         .child(text(subject).font(k.ty.ui).color(k.c.text_base).wrap_anywhere())
         .child(text(consequence).font(k.ty.ui).color(k.c.text_muted).wrap_anywhere());
-    confirm_dialog(k, overlays, Dialog::new("confirm-action", title), body, action.label(), State::confirm_action, State::cancel_action);
+    confirm_dialog(k, overlays, dialog, body, action.label(), State::confirm_action, State::cancel_action);
 }
 
 /// `dialog`, holding `body`, with the buttons to go ahead or back out.
@@ -481,35 +506,7 @@ fn confirm_dialog(k: &Kit, overlays: &mut Vec<El>, dialog: Dialog, body: El, lab
         .justify_end()
         .child(Button::new("Cancel").variant(ButtonVariant::Ghost).on_press(cancel).build(k))
         .child(Button::new(label).variant(ButtonVariant::Danger).on_press(confirm).build(k));
-    dialog.description("This can't be undone.").width(CONFIRM_WIDTH).fit().open(true).on_close(cancel).child(col().w_full().px(16.0).child(body)).child(buttons).build(k, overlays);
-}
-
-fn new_branch_dialog(s: &State, k: &Kit, overlays: &mut Vec<El>) {
-    if !s.naming_branch {
-        return;
-    }
-    let field = TextInput::new(&s.branch_text)
-        .width(None)
-        .placeholder("Branch name")
-        .label("Branch name")
-        .on_edit(|s: &mut State| &mut s.branch_text)
-        .on_submit(|s: &mut State, _: &mut Tx| s.create_branch())
-        .on_key(|s: &mut State, event: &KeyEvent, _: &mut Tx| edit_by_word(&mut s.branch_text, event));
-    let buttons = row()
-        .w_full()
-        .padding(16.0)
-        .gap(8.0)
-        .justify_end()
-        .child(Button::new("Cancel").variant(ButtonVariant::Ghost).on_press(State::cancel_new_branch).build(k))
-        .child(Button::new("Create").disabled(s.branch_text.text.trim().is_empty()).on_press(State::create_branch).build(k));
-    Dialog::new("new-branch", "New branch")
-        .width(CONFIRM_WIDTH)
-        .fit()
-        .open(true)
-        .on_close(State::cancel_new_branch)
-        .child(col().w_full().px(16.0).gap(8.0).child(text(format!("From {}", s.overview.head)).font(k.ty.ui).color(k.c.text_muted).wrap_anywhere()).child(field.build(k)))
-        .child(buttons)
-        .build(k, overlays);
+    dialog.width(CONFIRM_WIDTH).fit().open(true).on_close(cancel).child(col().w_full().px(16.0).child(body)).child(buttons).build(k, overlays);
 }
 
 /// The message for what is staged. Closing keeps it, and so does a commit that failed.
@@ -685,6 +682,121 @@ fn open_dialog(s: &State, k: &Kit, overlays: &mut Vec<El>) {
     pin_to_top(overlays);
 }
 
+/// The branches to switch to, and a new one when the name typed is new.
+fn branch_dialog(s: &State, k: &Kit, overlays: &mut Vec<El>) {
+    let Some(active) = s.switcher else { return };
+    let field = TextInput::new(&s.branch_text)
+        .width(None)
+        .placeholder("Branch name")
+        .label("Branch")
+        .on_edit(|s: &mut State| &mut s.branch_text)
+        .on_change(|s: &mut State, _: &mut Tx| s.switcher = Some(0))
+        .on_submit(|s: &mut State, _: &mut Tx| s.pick_branch(s.switcher.unwrap_or_default()))
+        .on_key(|s: &mut State, event: &KeyEvent, _: &mut Tx| match event.key {
+            Key::Up => {
+                s.move_switcher(-1);
+                true
+            }
+            Key::Down => {
+                s.move_switcher(1);
+                true
+            }
+            _ => edit_by_word(&mut s.branch_text, event),
+        });
+    let offer = s.branch_offer();
+    let mut list = col().key("branches").role("listbox").w_full().gap(2.0);
+    for (index, choice) in offer.choices.iter().enumerate() {
+        let before = index.checked_sub(1).map(|before| &offer.choices[before]);
+        match choice {
+            BranchChoice::Remote(_) if !matches!(before, Some(BranchChoice::Remote(_))) => list = list.child(separator(k, Some("Only on a remote"))),
+            BranchChoice::Create(_) if before.is_some() => list = list.child(separator(k, None)),
+            _ => {}
+        }
+        list = list.child(branch_row(s, k, choice, index == active, index));
+    }
+    let list = if offer.choices.is_empty() { list.child(muted(k, "No branches match").py(8.0)) } else { list };
+    let more = (offer.more > 0).then(|| muted(k, &format!("{} more, type to narrow them down", offer.more)).py(4.0));
+    let footer = row()
+        .w_full()
+        .gap(4.0)
+        .items_center()
+        .child(one_line("Type a new name to create a branch".to_owned()).font(k.ty.text_small).color(k.c.text_faint).px(8.0))
+        .child(row().grow(1.0))
+        .child(small_button("Fetch").shortcut("Ctrl+Shift+F").help("Get every remote's branches").disabled(!s.can_fetch()).on_press(|s: &mut State| s.run(Action::Fetch)).build(k))
+        .child(small_button("Remotes").on_press(State::open_remotes).build(k));
+    let content = col().w_full().px(16.0).pb(16.0).gap(12.0).child(field.build(k)).child(list.children(more)).child(footer);
+    Dialog::new("switch-branch", "Switch branch").width(PICKER_WIDTH).fit().open(true).on_close(State::close_switcher).child(content).build(k, overlays);
+    pin_to_top(overlays);
+}
+
+/// A row of the branch switcher.
+fn branch_row(s: &State, k: &Kit, choice: &BranchChoice, active: bool, index: usize) -> El {
+    let (title, detail) = match choice {
+        BranchChoice::Local(branch) if branch.id == s.overview.head => (branch.id.clone(), "current".to_owned()),
+        BranchChoice::Local(branch) => (branch.id.clone(), branch.detail.clone()),
+        BranchChoice::Remote(branch) => (branch.id(), branch.age.clone()),
+        BranchChoice::Create(name) => (format!("Create branch {name}"), format!("from {}", s.overview.head)),
+    };
+    let detail = one_line(detail).truncate_head().max_w(DETAIL_MAX_WIDTH).font(k.ty.text_small).color(k.c.text_faint);
+    picker_row(k, format!("branch{index}"), title, Some(detail), active, move |s, _| s.pick_branch(index))
+}
+
+/// A line between parts of a list, saying what follows when `label` does.
+fn separator(k: &Kit, label: Option<&str>) -> El {
+    let line = || row().grow(1.0).h(1.0).fill(k.c.border_weak);
+    let label = label.map(|label| [text(label.to_owned()).font(k.ty.text_small).color(k.c.text_faint), line()]);
+    row().w_full().gap(8.0).pt(6.0).pb(2.0).items_center().child(line()).children(label.into_iter().flatten())
+}
+
+/// The remotes, each with its URL, and a way to add one.
+fn remotes_dialog(s: &State, k: &Kit, overlays: &mut Vec<El>) {
+    if !s.managing_remotes {
+        return;
+    }
+    let idle = s.running.is_none();
+    let rows = s.overview.remotes.iter().map(|remote| {
+        let name = remote.name.clone();
+        row()
+            .key(format!("remote-{}", remote.name))
+            .w_full()
+            .h(PICKER_ROW_HEIGHT)
+            .px(8.0)
+            .gap(12.0)
+            .items_center()
+            // A column as wide as the name field, which the URL can't squeeze.
+            .child(row().w(REMOTE_NAME_WIDTH).min_w(REMOTE_NAME_WIDTH).child(one_line(remote.name.clone()).font(k.ty.ui_medium).color(k.c.text_base)))
+            .child(one_line(remote.url.clone()).truncate_head().font(k.ty.ui).color(k.c.text_muted))
+            .child(row().grow(1.0))
+            .child(small_button("Remove").disabled(!idle).on_press(move |s: &mut State| s.ask_to_remove_remote(&name)).build(k))
+    });
+    let list = col().key("remotes").w_full().gap(2.0).children(rows);
+    let list = if s.overview.remotes.is_empty() { list.child(muted(k, "No remotes yet").py(8.0)) } else { list };
+    let name = TextInput::new(&s.remote_name_text)
+        .width(Some(REMOTE_NAME_WIDTH))
+        .placeholder(s.default_remote_name().unwrap_or("Name"))
+        .label("Remote name")
+        .on_edit(|s: &mut State| &mut s.remote_name_text)
+        .on_submit(|s: &mut State, _: &mut Tx| s.add_remote())
+        .on_key(|s: &mut State, event: &KeyEvent, _: &mut Tx| edit_by_word(&mut s.remote_name_text, event));
+    let url = TextInput::new(&s.remote_url_text)
+        .width(None)
+        .placeholder("URL, like git@github.com:owner/project.git")
+        .label("Remote URL")
+        .on_edit(|s: &mut State| &mut s.remote_url_text)
+        .on_submit(|s: &mut State, _: &mut Tx| s.add_remote())
+        .on_key(|s: &mut State, event: &KeyEvent, _: &mut Tx| edit_by_word(&mut s.remote_url_text, event));
+    let add = row()
+        .key("add-remote")
+        .w_full()
+        .gap(8.0)
+        .items_center()
+        .child(name.build(k))
+        .child(col().grow(1.0).min_w(0.0).child(url.build(k)))
+        .child(Button::new("Add").disabled(!s.can_add_remote()).on_press(State::add_remote).build(k));
+    let content = col().w_full().px(16.0).pb(16.0).gap(12.0).child(list).child(add);
+    Dialog::new("remotes", "Remotes").width(PICKER_WIDTH).fit().open(true).on_close(State::close_remotes).child(content).build(k, overlays);
+}
+
 /// Pins the dialog just built to the top of the window, so it holds still as its list shrinks.
 /// Dialog pushes the layer centring its panel last.
 fn pin_to_top(overlays: &mut Vec<El>) {
@@ -743,13 +855,13 @@ mod tests {
         state.draft_text = TextEdit::new("one".to_owned());
         let press = |mods| KeyEvent { key: Key::Enter, mods };
         let text: for<'a> fn(&'a mut State) -> &'a mut TextEdit = |s| &mut s.draft_text;
-        let save: fn(&mut State) = |s| s.naming_branch = true;
+        let save: fn(&mut State) = |s| s.managing_remotes = true;
 
         assert!(multi_line_key(&mut state, &press(Mods::default()), text, save));
-        assert_eq!((state.draft_text.text.as_str(), state.naming_branch), ("one\n", false));
+        assert_eq!((state.draft_text.text.as_str(), state.managing_remotes), ("one\n", false));
 
         assert!(multi_line_key(&mut state, &press(Mods { ctrl: true, cmd: true, ..Mods::default() }), text, save));
-        assert_eq!((state.draft_text.text.as_str(), state.naming_branch), ("one\n", true));
+        assert_eq!((state.draft_text.text.as_str(), state.managing_remotes), ("one\n", true));
     }
 
     #[test]

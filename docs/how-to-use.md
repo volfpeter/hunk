@@ -17,7 +17,7 @@ The bar at the top picks what you're looking at:
 - **Changes:** everything not committed yet
 - **Staging:** what changed since you last staged
 - **Commits:** any of the latest 200 on the current branch
-- **Branches:** what a branch added since it left the default branch
+- **Branches:** what a branch added since it left its parent: the branch it grew from, else the default branch
 - **Stashes:** what a stash holds
 - **Comments:** every comment, from any review, open ones first
 
@@ -78,9 +78,21 @@ To commit, press **Ctrl+Enter** or **Ctrl+Shift+C** (or run **Git: Commit** from
 
 ## Branches and stashes
 
-- **Branches:** select a branch and press **Check out**, or press **New branch** to start one from where you are.
+- **Branches:** the branch you're on is picked when you open it. Select another and press **Check out** to switch to it. To switch or start a branch, see [Switch branches](#switch-branches). Whichever way you switch, even from a terminal, the review moves to the branch you're now on.
 - **Ctrl+Shift+S**, or **Git: Stash** in the [command palette](#commands), puts changes aside. Give the stash a name if you like, and pick what it takes: your changes and new files, your changes alone, or only what's staged.
 - **Stashes:** select one and press **Apply** to bring it back and keep it, **Pop** to bring it back and remove it, or **Drop** to delete it, which asks first.
+
+## Switch branches
+
+**Ctrl+B**, or clicking the branch name next to the repository's, opens the branch switcher. It lists your branches, the most recently changed first, then those that are only on a remote, like a colleague's or an agent's. Type to filter, use the arrow keys to pick and **Enter** to switch. A branch that is only on a remote becomes a local branch tracking it.
+
+Type a name no branch has, and the list offers **Create branch** with it, starting from where you are.
+
+**Fetch**, at the bottom of the switcher, or **Ctrl+Shift+F**, gets what every remote has. Branches deleted on a remote leave the list.
+
+## Remotes
+
+**Remotes**, at the bottom of the branch switcher or in the [command palette](#commands), lists the repository's remotes with their URLs. To add one, type its URL and press **Add** or **Enter**. Give it a name, or leave the name empty to call it `origin` when there is no `origin` yet. **Remove** asks first, as the remote's branches go with it. Adding a remote doesn't fetch it.
 
 ## Pull and push
 
@@ -94,4 +106,4 @@ They use your own Git setup, but can't answer prompts: if Git needs a password i
 
 The list also moves through the diff, switches to another review and opens another repository. A command with a key shows it, to use without the list: **]** and **[** go to the next and previous file, **j** and **k** to the next and previous change.
 
-Keys follow a pattern: **Ctrl** with a letter opens something to pick from, like **Ctrl+K** and **Ctrl+O**, and **Ctrl+Shift** with a letter or arrow runs a Git operation.
+Keys follow a pattern: **Ctrl** with a letter opens something to pick from, like **Ctrl+K**, **Ctrl+O** and **Ctrl+B**, and **Ctrl+Shift** with a letter or arrow runs a Git operation.

@@ -70,6 +70,29 @@ impl CommitPlan {
 /// Lines a change adds and removes.
 pub type LineCounts = (u32, u32);
 
+/// A branch that is only on a remote: no local branch has its name.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RemoteBranch {
+    pub remote: String,
+    pub name: String,
+    /// When it last changed, for people.
+    pub age: String,
+}
+
+impl RemoteBranch {
+    /// What git calls it, like `origin/main`.
+    pub fn id(&self) -> String {
+        format!("{}/{}", self.remote, self.name)
+    }
+}
+
+/// A remote, by the URL it fetches from.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Remote {
+    pub name: String,
+    pub url: String,
+}
+
 /// How far the current branch and the branch it tracks have moved apart.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Upstream {
@@ -85,7 +108,11 @@ pub struct Overview {
     /// The branch others are compared against.
     pub base: String,
     pub commits: Vec<Entry>,
+    /// The local branches, newest first.
     pub branches: Vec<Entry>,
+    /// Newest first.
+    pub remote_branches: Vec<RemoteBranch>,
+    pub remotes: Vec<Remote>,
     pub stashes: Vec<Entry>,
     /// Every file with something uncommitted about it, by path.
     pub files: HashMap<String, FileStatus>,
@@ -100,16 +127,19 @@ pub struct Overview {
 impl Overview {
     pub fn load(repo: &Repo) -> Result<Overview> {
         let branches = branches(repo)?;
+        let remotes = remotes(repo)?;
         Ok(Overview {
             head: head(repo)?,
             base: base_branch(repo, &branches)?,
             commits: commits(repo)?,
+            remote_branches: remote_branches(repo, &remotes, &branches)?,
+            project: project(&remotes),
+            remotes,
             branches,
             stashes: stashes(repo)?,
             files: file_statuses(repo)?,
             staged_lines: staged_lines(repo)?,
             upstream: upstream(repo)?,
-            project: project(repo)?,
         })
     }
 
@@ -135,12 +165,23 @@ impl Overview {
     }
 }
 
-/// The name the first remote URL that has one gives the project, trying `origin`'s first.
-fn project(repo: &Repo) -> Result<Option<String>> {
+/// The remotes in the order they were added, each with its first URL.
+fn remotes(repo: &Repo) -> Result<Vec<Remote>> {
     let urls = repo.run_accepting(&["config", "-z", "--get-regexp", r"^remote\..*\.url$"], &[0, 1])?;
-    let mut remotes: Vec<(&str, &str)> = urls.split_terminator('\0').filter_map(|entry| entry.split_once('\n')).collect();
-    remotes.sort_by_key(|(key, _)| *key != "remote.origin.url");
-    Ok(remotes.into_iter().find_map(|(_, url)| project_in(url)))
+    let mut remotes: Vec<Remote> = Vec::new();
+    for (key, url) in urls.split_terminator('\0').filter_map(|entry| entry.split_once('\n')) {
+        let Some(name) = key.strip_prefix("remote.").and_then(|key| key.strip_suffix(".url")) else { continue };
+        if !remotes.iter().any(|remote| remote.name == name) {
+            remotes.push(Remote { name: name.to_owned(), url: url.to_owned() });
+        }
+    }
+    Ok(remotes)
+}
+
+/// The name the first remote URL that has one gives the project, trying `origin`'s first.
+fn project(remotes: &[Remote]) -> Option<String> {
+    let origin = remotes.iter().filter(|remote| remote.name == "origin");
+    origin.chain(remotes).find_map(|remote| project_in(&remote.url))
 }
 
 /// `<user-or-org>/<project>` from the last two parts of a remote's URL, unless it has no host,
@@ -166,11 +207,14 @@ fn head(repo: &Repo) -> Result<String> {
     Ok(branch.trim().to_owned())
 }
 
-/// The remote's default branch, else `main` or `master`, else whatever is checked out.
+/// The local branch named after `origin`'s default branch, or that remote branch itself when
+/// there is no such local one, else `main` or `master`, else whatever is checked out.
 fn base_branch(repo: &Repo, branches: &[Entry]) -> Result<String> {
     let remote = repo.run_accepting(&["symbolic-ref", "--short", "-q", "refs/remotes/origin/HEAD"], &[0, 1])?;
-    if !remote.trim().is_empty() {
-        return Ok(remote.trim().to_owned());
+    let remote = remote.trim();
+    if !remote.is_empty() {
+        let local = remote.strip_prefix("origin/").filter(|name| branches.iter().any(|branch| branch.id == *name));
+        return Ok(local.unwrap_or(remote).to_owned());
     }
     let local = ["main", "master"].into_iter().find(|name| branches.iter().any(|branch| branch.id == *name));
     Ok(local.unwrap_or("HEAD").to_owned())
@@ -198,6 +242,27 @@ fn branches(repo: &Repo) -> Result<Vec<Entry>> {
         .filter_map(|line| {
             let (name, age) = line.split_once(FIELD)?;
             Some(Entry { id: name.to_owned(), title: name.to_owned(), detail: age.to_owned() })
+        })
+        .collect())
+}
+
+/// The branches of `remotes` that no local branch is named after. A remote's name may hold `/`,
+/// so the longest that starts the ref wins.
+fn remote_branches(repo: &Repo, remotes: &[Remote], local: &[Entry]) -> Result<Vec<RemoteBranch>> {
+    let refs = repo.run(&["for-each-ref", "--sort=-committerdate", "--format=%(refname:lstrip=2)%1f%(symref)%1f%(committerdate:relative)", "refs/remotes"])?;
+    Ok(refs
+        .lines()
+        .filter_map(|line| {
+            let mut fields = line.split(FIELD);
+            let (id, symref, age) = (fields.next()?, fields.next()?, fields.next()?);
+            // `<remote>/HEAD` points at another branch.
+            if !symref.is_empty() {
+                return None;
+            }
+            let remote = remotes.iter().filter(|remote| id.strip_prefix(&remote.name).is_some_and(|rest| rest.starts_with('/'))).max_by_key(|remote| remote.name.len())?;
+            let name = &id[remote.name.len() + 1..];
+            let only_remote = !local.iter().any(|branch| branch.id == name);
+            only_remote.then(|| RemoteBranch { remote: remote.name.clone(), name: name.to_owned(), age: age.to_owned() })
         })
         .collect())
 }
@@ -352,6 +417,26 @@ mod tests {
         assert_eq!(project().as_deref(), Some("someone/thing"));
         fixture.git(&["remote", "add", "origin", "https://codeberg.org/org/thing/"]);
         assert_eq!(project().as_deref(), Some("org/thing"));
+    }
+
+    #[test]
+    fn offers_the_remote_branches_that_no_local_branch_is_named_after() {
+        let origin = Fixture::new();
+        origin.commit("a.txt", "one\n", "first");
+        origin.git(&["branch", "user/feature"]);
+        let clone = Fixture::new();
+        clone.git(&["remote", "add", "origin", origin.repo.root().to_str().unwrap()]);
+        clone.git(&["fetch", "-q", "origin"]);
+        clone.git(&["remote", "set-head", "origin", "main"]);
+        clone.git(&["checkout", "-q", "-b", "main", "origin/main"]);
+
+        let overview = Overview::load(&clone.repo).unwrap();
+
+        assert_eq!(overview.base, "main", "the local branch, rather than origin's");
+        assert_eq!(overview.remotes, [Remote { name: "origin".into(), url: origin.repo.root().to_str().unwrap().into() }]);
+        let ids: Vec<String> = overview.remote_branches.iter().map(RemoteBranch::id).collect();
+        assert_eq!(ids, ["origin/user/feature"]);
+        assert_eq!(overview.remote_branches[0].name, "user/feature");
     }
 
     #[test]

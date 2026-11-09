@@ -18,7 +18,8 @@ Everything the app does, to try at your own pace. A tick means Peter tried it an
 - [ ] Changes: everything not committed, new files included
 - [ ] Staging: what changed since you last staged
 - [ ] Commits: any of the latest 200 on the current branch
-- [ ] Branches: what a branch added since it left the default branch
+- [ ] Branches: what a branch added since it left its parent, the local branch it grew from, else the default branch
+- [ ] Branches opens on the current branch
 - [ ] Stashes: what a stash holds
 - [ ] A repository without commits works
 
@@ -75,6 +76,12 @@ Everything the app does, to try at your own pace. A tick means Peter tried it an
 - [ ] Discard and Drop ask first
 - [ ] Check out a branch
 - [ ] Create a branch
+- [ ] Ctrl+B, Ctrl+Shift+B or the branch name in the bar opens one switcher: local branches newest first, then those only on a remote
+- [ ] Typing filters the switcher, and a name no branch has offers to create it
+- [ ] A branch only on a remote checks out as a local branch tracking it
+- [ ] Switching branches, from the app or a terminal, moves the Branches review to the new branch
+- [ ] Fetch every remote with Ctrl+Shift+F, or from the switcher, dropping branches deleted there
+- [ ] Remotes dialog: see each remote's URL, add one (named `origin` by default when there is none), remove one after a confirm
 - [ ] Stash from a dialog: changes and new files, changes alone, or only what's staged
 - [ ] Name a stash
 - [ ] Apply, pop and drop a stash
