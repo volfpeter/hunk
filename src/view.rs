@@ -6,7 +6,7 @@ use rune_kit::diff::{Annotation, DiffMode, DiffView};
 use rune_kit::{Badge, Button, ButtonVariant, ControlSize, Dialog, FileNode, IconButton, IconButtonVariant, Kit, RadioGroup, RadioItem, SegmentedControl, Spinner, TextArea, TextInput, Toast, ToastRegion, Tree, TreeItem, TreeModel, TreeStyle, root};
 
 use crate::action::{Action, Stashed};
-use crate::app::{COMMIT, Command, DRAFT_NOTE, Kind, PULL, PUSH, PullRequestOffer, State, copy_label};
+use crate::app::{APPLICATION, COMMENTS, COMMIT, COPY, Command, DRAFT_NOTE, KEYS, Kind, PALETTE, PULL, PUSH, PullRequestOffer, State, copy_label};
 use crate::comments::Comment;
 use crate::gh::{PullRequest, Status};
 use crate::open::{Choice, tilde};
@@ -41,6 +41,9 @@ const HEAD_MAX_WIDTH: f32 = 160.0;
 const REMOTE_NAME_WIDTH: f32 = 140.0;
 /// The most width a pull request's number and title take from the list's header.
 const PULL_REQUEST_MAX_WIDTH: f32 = 200.0;
+const KEYS_COLUMN_WIDTH: f32 = 332.0;
+const KEYS_COLUMN_GAP: f32 = 24.0;
+const KEY_ROW_HEIGHT: f32 = 28.0;
 
 /// Two points compared, neither leading to the other.
 static COMPARED: Icon = Icon {
@@ -105,6 +108,13 @@ static COMMENTS_ICON: Icon = Icon {
     body: r#"<path d="M2.5 3.5C2.5 2.95 2.95 2.5 3.5 2.5H12.5C13.05 2.5 13.5 2.95 13.5 3.5V10C13.5 10.55 13.05 11 12.5 11H7L4.5 13.5V11H3.5C2.95 11 2.5 10.55 2.5 10V3.5Z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" fill="none"/>"#,
 };
 
+/// The keys: a question in a circle.
+static KEYS_ICON: Icon = Icon {
+    name: "hunk-keys",
+    view: 16.0,
+    body: r#"<circle cx="8" cy="8" r="6.25" stroke="currentColor" stroke-width="1.5" fill="none"/><path d="M6.25 6.25C6.25 5.25 7 4.5 8 4.5C9 4.5 9.75 5.25 9.75 6.15C9.75 7.5 8 7.6 8 9" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" fill="none"/><circle cx="8" cy="11.5" r="0.9" fill="currentColor"/>"#,
+};
+
 /// Where a comment card sits, which decides what it repeats of its surroundings.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum CardPlace {
@@ -146,6 +156,7 @@ pub fn view(s: &State, cx: &mut Cx<State>) -> El {
     palette_dialog(s, &k, &mut overlays);
     open_dialog(s, &k, &mut overlays);
     branch_dialog(s, &k, &mut overlays);
+    keys_dialog(s, &k, &mut overlays);
     outcome_toast(s, &k, &mut overlays);
     if !s.has_repository() {
         return root(col().fill(k.c.page).padding(SHEET_GAP).child(welcome(s, &k)), overlays);
@@ -180,11 +191,13 @@ fn bar(s: &State, k: &Kit) -> El {
 
     let open = s.comments.open().len();
     let comments_help = match open {
-        _ if s.showing_comments => "Back to the review".to_owned(),
+        _ if s.showing_comments => format!("Back to {}", s.kind.label()),
         0 => "Comments".to_owned(),
         n => format!("Comments, {n} open"),
     };
     let comments = BarButton::new(&COMMENTS_ICON, comments_help).count((open > 0).then(|| open.to_string())).expanded(s.showing_comments);
+    // The key only opens the page.
+    let comments = if s.showing_comments { comments } else { comments.shortcut(COMMENTS) };
     let comments = comments.build(k, |s, _| s.toggle_comments());
     let staged = s.overview.staged_files();
     let commit_help = match staged {
@@ -206,6 +219,7 @@ fn bar(s: &State, k: &Kit) -> El {
     let pull = pull.build(k, |s, _| s.run(Action::Pull));
     let push = BarButton::new(&PUSH_ICON, moving("Push", ahead, "send")).count(counted(ahead)).shortcut(PUSH).disabled(!s.can_push());
     let push = push.build(k, |s, _| s.run(Action::Push));
+    let keys = BarButton::new(&KEYS_ICON, "Keyboard shortcuts".to_owned()).shortcut(KEYS).muted(true).expanded(s.showing_keys).build(k, |s, _| s.open_keys());
 
     let repository = head_button(s.repo_name(), "Open another repository", "Ctrl+O").disabled(!s.can_open()).on_press(State::open_opener);
     let branch = head_button(s.overview.head.clone(), "Switch branch", "Ctrl+B").variant(ButtonVariant::GhostMuted).on_press(State::open_switcher);
@@ -227,6 +241,7 @@ fn bar(s: &State, k: &Kit) -> El {
         .child(commit.key("commit"))
         .child(pull.key("pull"))
         .child(push.key("push"))
+        .child(keys.key("keys"))
 }
 
 /// A button of the bar: an icon, with a count beside it when there is something to count.
@@ -547,6 +562,7 @@ fn comments_page(s: &State, k: &Kit) -> El {
     let copy = Button::new(if s.just_copied(None) { "Copied".to_owned() } else { copy_label(to_copy) })
         .variant(ButtonVariant::Ghost)
         .disabled(to_copy == 0)
+        .shortcut(COPY)
         .help("Copy them as one prompt for an agent, leaving out outdated ones")
         .on_press_tx(State::copy_open_comments);
     let status = status_line()
@@ -935,6 +951,50 @@ fn open_dialog(s: &State, k: &Kit, overlays: &mut Vec<El>) {
     let content = col().w_full().px(16.0).pb(16.0).gap(12.0).child(field.build(k)).child(list.children(more)).child(hint);
     Dialog::new("open", "Open a repository").width(PICKER_WIDTH).fit().open(true).on_close(State::close_opener).child(content).build(k, overlays);
     pin_to_top(overlays);
+}
+
+/// Every key of the palette's commands, by topic, the palette's own first, in two columns so a
+/// short window holds them.
+fn keys_dialog(s: &State, k: &Kit, overlays: &mut Vec<El>) {
+    if !s.showing_keys {
+        return;
+    }
+    let heading = |topic: &str| text(topic.to_owned()).font(k.ty.text_small).color(k.c.text_faint).px(8.0).pb(4.0);
+    let mut sections: Vec<(&str, Vec<El>)> = vec![(APPLICATION, vec![heading(APPLICATION), key_row(k, "Command palette", PALETTE)])];
+    for command in s.keyed_commands() {
+        if sections.last().is_none_or(|(topic, _)| *topic != command.topic) {
+            sections.push((command.topic, vec![heading(command.topic)]));
+        }
+        let keys = command.shortcut.into_iter().chain(command.alias).collect::<Vec<_>>().join(" / ");
+        if let Some((_, rows)) = sections.last_mut() {
+            rows.push(key_row(k, &command.label, &keys));
+        }
+    }
+    // Split between topics, where the taller column is the shortest.
+    let rows: usize = sections.iter().map(|(_, rows)| rows.len()).sum();
+    let taller = |split: usize| {
+        let left: usize = sections[..split].iter().map(|(_, rows)| rows.len()).sum();
+        left.max(rows - left)
+    };
+    let split = (1..=sections.len()).min_by_key(|split| taller(*split)).unwrap_or_default();
+    let right = sections.split_off(split);
+    let column = |sections: Vec<(&str, Vec<El>)>| col().w(KEYS_COLUMN_WIDTH).gap(12.0).children(sections.into_iter().map(|(_, rows)| col().w_full().children(rows)));
+    let columns = row().key("key-list").w_full().px(16.0).pb(16.0).gap(KEYS_COLUMN_GAP).items_start().child(column(sections)).child(column(right));
+    let width = 2.0 * KEYS_COLUMN_WIDTH + KEYS_COLUMN_GAP + 32.0;
+    Dialog::new("keys", "Keyboard shortcuts").width(width).fit().open(true).on_close(State::close_keys).child(columns).build(k, overlays);
+}
+
+/// What `key` does, the key at the end.
+fn key_row(k: &Kit, label: &str, key: &str) -> El {
+    row()
+        .w_full()
+        .h(KEY_ROW_HEIGHT)
+        .px(8.0)
+        .gap(12.0)
+        .items_center()
+        .child(one_line(label.to_owned()).font(k.ty.ui).color(k.c.text_base))
+        .child(row().grow(1.0))
+        .child(text(key.to_owned()).font(k.ty.mono).color(k.c.text_muted))
 }
 
 /// The branches to switch to, and a new one when the name typed is new.

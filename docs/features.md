@@ -13,7 +13,7 @@ Everything the app does, to try at your own pace. A tick means Peter tried it an
 - [ ] Switching repositories starts afresh
 - [ ] The bar names the repository `owner/project` after its remote, or its folder
 
-## Reviews
+## Views
 
 - [ ] The bar lists them by reach: Staging, Changes, Branches, Commits, Stashes
 - [ ] Staging opens first, on start and in another repository
@@ -29,7 +29,7 @@ Everything the app does, to try at your own pace. A tick means Peter tried it an
 
 - [ ] Unified and split layout
 - [ ] Unified or Split holds for every diff, the comments page too, and across restarts
-- [ ] The picked review (Staging, Changes, …) holds across repositories and restarts
+- [ ] The picked view (Staging, Changes, …) holds across repositories and restarts
 - [ ] Syntax highlighting
 - [ ] Changed files list jumps to a file, and follows as you scroll
 - [ ] File list and diff use the same order, by path
@@ -45,14 +45,14 @@ Everything the app does, to try at your own pace. A tick means Peter tried it an
 - [ ] Comments survive a restart
 - [ ] Comments follow their code as it moves
 - [ ] Comments whose code is gone show as outdated, and recover if it returns
-- [ ] Comments appear in any review containing their lines
+- [ ] Comments appear in any view containing their lines
 - [ ] Comment on unfolded lines, and Show in diff on a comment in a fold unfolds it
 - [ ] Comments, on the right of the bar with the open count, opens a page of every comment, and again goes back
 - [ ] The page shows each comment under the code it was written on, with three lines around it, even once that code has changed
 - [ ] The page lists open comments, then outdated, then resolved ones, which start closed
 - [ ] Opening or closing an entry on the page holds until the comment is resolved or reopened
-- [ ] Each entry's header says where the comment is now, the review it was written in and its status
-- [ ] Show in diff opens the comment's review at the comment, resolved or not
+- [ ] Each entry's header says where the comment is now, the view it was written in and its status
+- [ ] Show in diff opens the comment's view at the comment, resolved or not
 - [ ] Edit, delete, resolve and reopen, in the diff and on the page
 - [ ] Copy one comment, outdated or not, from its entry
 - [ ] Copy every open comment that isn't outdated, from the page or the palette, its label counting them
@@ -89,7 +89,7 @@ Everything the app does, to try at your own pace. A tick means Peter tried it an
 - [ ] Ctrl+B, Ctrl+Shift+B or the branch name in the bar opens one switcher: local branches newest first, then those only on a remote
 - [ ] Typing filters the switcher, and a name no branch has offers to create it
 - [ ] A branch only on a remote checks out as a local branch tracking it
-- [ ] Switching branches, from the app or a terminal, moves the Branches review to the new branch
+- [ ] Switching branches, from the app or a terminal, moves the Branches view to the new branch
 - [ ] Fetch every remote with Ctrl+Shift+F, or from the switcher, dropping branches deleted there
 - [ ] Remotes dialog: see each remote's URL, add one (named `origin` by default when there is none), remove one after a confirm
 - [ ] Stash from a dialog: changes and new files, changes alone, or only what's staged
@@ -129,7 +129,17 @@ Everything the app does, to try at your own pace. A tick means Peter tried it an
 - [ ] File commands act on the file at the top of the diff
 - [ ] Next and previous file and hunk from the palette, showing their keys
 - [ ] The palette's highlighted command stands out, marked with ›
-- [ ] Ctrl+Enter or Ctrl+Shift+C commits, Ctrl+Shift+S stashes, Ctrl+Shift+↓ pulls, Ctrl+Shift+↑ pushes
+- [ ] Ctrl+Enter commits, Ctrl+Shift+S stashes, Ctrl+Shift+↓ pulls, Ctrl+Shift+↑ pushes
 - [ ] The palette shows those keys
-- [ ] Switch to any other review from the palette
+- [ ] Switch to any other view from the palette
 - [ ] Open a repository from the palette
+- [ ] Ctrl+H, or the question mark at the far right of the bar, lists every key, grouped as the palette groups them, Ctrl+K first
+- [ ] The list shows keys that do nothing right now too, like Push with nothing to push
+- [ ] Ctrl+H again or Escape closes it, and git keys do nothing while it is open
+- [ ] It shows a second key where there is one: Ctrl+B / Ctrl+Shift+B
+- [ ] The palette offers it too, as Application: Keyboard shortcuts
+- [ ] Palette topics: Application, Git, View, File, Navigation; the overlay shows those with keys, in two balanced columns
+- [ ] Ctrl+1 to Ctrl+5 switch to Staging, Changes, Branches, Commits and Stashes
+- [ ] Ctrl+0 opens the comments page
+- [ ] Ctrl+Shift+C copies every open comment that isn't outdated
+- [ ] Ctrl+\\ switches the diff between unified and split, also from the palette

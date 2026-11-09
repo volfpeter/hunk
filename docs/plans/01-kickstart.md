@@ -1,6 +1,6 @@
 # 0001: Approach
 
-Status: step 4f done, waiting for Peter's UI review. See [Tasks](#tasks).
+Status: step 4h done, waiting for Peter's UI review. Step 4g's `s` / `u` is still open. See [Tasks](#tasks).
 
 ## Intent
 
@@ -234,14 +234,15 @@ Tasks:
 - [x] Open a pull request for a branch, in the browser
 - [x] Show a branch's pull request on GitHub, and open it in the browser
 
-### Step 4g: Hotkeys
+### Done - Step 4g: Hotkeys
 
 Hotkeys go in before the layout is reworked, so the keys are assigned once and the rework can place their hints. Give the frequent actions a key. Step 4h adds an overlay listing them.
 
 Decided, so a new key can be guessed from its kind:
 
-- **Ctrl+key opens a picker or switcher**, changing nothing until you pick: K the palette, O a repository, B the branches (step 4d), later P a file in the diff.
-- **Ctrl+Shift+key runs a git operation**: C commit, S stash, ↓ pull, ↑ push, B branches as an alias of Ctrl+B, F fetch (step 4d). Ctrl+Shift+P stays free: it was the palette's alias, and a VS Code habit shouldn't land on a git operation.
+- **Ctrl+key opens a picker or switcher**, changing nothing until you pick: K the palette, O a repository, B the branches (step 4d), H the keys (step 4h), later P a file in the diff. Ctrl+digit goes to a page: 1 to 5 the reviews in the bar's order, 0 the comments page.
+- **Ctrl+Shift+key runs a git operation**: S stash, ↓ pull, ↑ push, B branches as an alias of Ctrl+B, F fetch (step 4d). Ctrl+Shift+P stays free: it was the palette's alias, and a VS Code habit shouldn't land on a git operation. C copies the open comments, the one exception: Commit lost it as an alias in step 4h, since Ctrl+Enter is its key.
+- **Ctrl+\\ switches the diff between unified and split**, VS Code's key for splitting an editor.
 - **Ctrl+Enter confirms a dialog**, and with none open starts a commit.
 - **Bare keys act on what has focus**: moving through the diff, and `s` / `u` to stage and unstage.
 
@@ -259,9 +260,9 @@ Tasks:
 
 - [x] Keys for commit, stash, pull and push
 - [x] Commit everything when nothing is staged, with the dialog summarising what the commit takes
-- [ ] `s` / `u` stage and unstage the focused item: a row in either file tree, else the diff's file
+- [x] `s` / `u` stage and unstage the focused item: a row in either file tree, else the diff's file. They act on focus rather than the diff's top file, so they aren't the palette's Stage and Unstage, and the key overlay (step 4h) doesn't pick them up: give them rows there by hand.
 
-### Step 4h: Hotkey overlay
+### Done - Step 4h: Hotkey overlay
 
 Lists every key, grouped as the palette groups its commands, so keys can be found without remembering them.
 
@@ -269,9 +270,13 @@ Lists every key, grouped as the palette groups its commands, so keys can be foun
 - **Same topics, same order as the palette**, with Ctrl+K (open the palette) as the first line above them. Built from the palette's commands, so a command that gains a key, or a new command from step 4i, shows up without touching the overlay. Commands without a key are left out.
 - It lists keys, it doesn't run anything. Keys Rune provides itself (text fields, lists and the like) are left out. Our own bare keys that the palette doesn't hold, like `s` / `u`, need a place in the same list.
 
+Built: the palette's commands carry whether they can run now, rather than leaving out those that can't, so the overlay lists every key, Push's included when there is nothing to push, while the palette and the keys still offer only what can run. The overlay is a dialog, so git keys do nothing under it, and Ctrl+H closes it again, or swaps the palette for it. A command can carry a second key, shown after its own, which only Switch branch has. The overlay is "Keyboard shortcuts", in two columns split between topics so the taller is shortest, as a window 600 points tall must hold it all: `Dialog` doesn't scroll content taller than the window.
+
+Peter rethought the topics, for the palette too, around what a command acts on: Application (Command palette, in the overlay only, Open repository, Keyboard shortcuts, Copy open comments), Git, View (the five views, Comments and the diff's layout), File, then Navigation. Topics of one command felt off. The palette opens on Open repository. The bar's pages are **views** to the user, as reviewing is what the app is for, not what a page is called: the user guide, features list and palette say view. The model keeps `Review`, a comparison of two points, and the code its names. `s` / `u` don't exist yet, so nothing of theirs is listed.
+
 Tasks:
 
-- [ ] Overlay listing every key, on Ctrl+H and from a question-mark icon at the right of the bar
+- [x] Overlay listing every key, on Ctrl+H and from a question-mark icon at the right of the bar
 
 ### Step 4i: More git operations
 

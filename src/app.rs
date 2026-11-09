@@ -136,20 +136,28 @@ type Run = Box<dyn Fn(&mut State, &mut Tx)>;
 /// Something the command palette offers.
 pub struct Command {
     /// What it concerns, such as "Git".
-    topic: &'static str,
+    pub topic: &'static str,
     pub label: String,
     /// The key that does the same outside the palette.
     pub shortcut: Option<&'static str>,
+    /// Another key that does the same.
+    pub alias: Option<&'static str>,
+    /// Whether it can run right now.
+    available: bool,
     run: Run,
 }
 
 impl Command {
     fn new(topic: &'static str, label: impl Into<String>, run: impl Fn(&mut State, &mut Tx) + 'static) -> Command {
-        Command { topic, label: label.into(), shortcut: None, run: Box::new(run) }
+        Command { topic, label: label.into(), shortcut: None, alias: None, available: true, run: Box::new(run) }
     }
 
     fn shortcut(self, key: &'static str) -> Command {
         Command { shortcut: Some(key), ..self }
+    }
+
+    fn alias(self, key: &'static str) -> Command {
+        Command { alias: Some(key), ..self }
     }
 
     /// Its topic and label, as one line.
@@ -158,23 +166,34 @@ impl Command {
     }
 }
 
+/// The topic of commands about the app rather than the repository.
+pub const APPLICATION: &str = "Application";
+pub const PALETTE: &str = "Ctrl+K";
+pub const KEYS: &str = "Ctrl+H";
 pub const COMMIT: &str = "Ctrl+Enter";
 const STASH: &str = "Ctrl+Shift+S";
 pub const PULL: &str = "Ctrl+Shift+↓";
 pub const PUSH: &str = "Ctrl+Shift+↑";
 const FETCH: &str = "Ctrl+Shift+F";
+pub const COPY: &str = "Ctrl+Shift+C";
+/// The key of each view of the repository, in the order of `Kind::ALL`.
+const VIEWS: [&str; 5] = ["Ctrl+1", "Ctrl+2", "Ctrl+3", "Ctrl+4", "Ctrl+5"];
+pub const COMMENTS: &str = "Ctrl+0";
+const LAYOUT: &str = "Ctrl+\\";
 
-/// The shortcut of the git command `event` runs. Git commands go on Ctrl+Shift, and Commit on
-/// Ctrl+Enter too, which shows as its key: Ctrl+Shift+C is the other.
-fn git_shortcut(event: &KeyEvent) -> Option<&'static str> {
+/// The shortcut of the command `event` runs, of those that run only with no dialog open.
+fn command_shortcut(event: &KeyEvent) -> Option<&'static str> {
     let ctrl_shift = event.mods.cmd && event.mods.shift;
     match &event.key {
         Key::Enter if event.mods.cmd => Some(COMMIT),
         Key::Down if ctrl_shift => Some(PULL),
         Key::Up if ctrl_shift => Some(PUSH),
-        _ if ctrl_shift && event.is_command('c') => Some(COMMIT),
+        Key::Command(digit @ '1'..='5') => VIEWS.get(*digit as usize - '1' as usize).copied(),
+        _ if ctrl_shift && event.is_command('c') => Some(COPY),
         _ if ctrl_shift && event.is_command('s') => Some(STASH),
         _ if ctrl_shift && event.is_command('f') => Some(FETCH),
+        _ if event.is_command('0') => Some(COMMENTS),
+        _ if event.is_command('\\') => Some(LAYOUT),
         _ => None,
     }
 }
@@ -261,6 +280,8 @@ pub struct State {
     pub palette_text: TextEdit,
     /// The highlighted row of the command palette, while it is open.
     pub palette: Option<usize>,
+    /// Whether the list of keys is open.
+    pub showing_keys: bool,
     shown: Option<Shown>,
     /// The comment to scroll to once its review is on screen.
     reveal: Option<u64>,
@@ -325,6 +346,7 @@ impl State {
             watch_error: None,
             palette_text: TextEdit::default(),
             palette: None,
+            showing_keys: false,
             shown: None,
             reveal: None,
             copied: Notice::new(COPIED_FOR),
@@ -400,7 +422,7 @@ impl State {
     }
 
     pub fn on_key(&mut self, event: &KeyEvent, tx: &mut Tx) -> bool {
-        if let Some(shortcut) = git_shortcut(event) {
+        if let Some(shortcut) = command_shortcut(event) {
             if !self.dialog_open() && self.palette.is_none() {
                 self.run_shortcut(shortcut, tx);
             }
@@ -409,6 +431,14 @@ impl State {
         if event.is_command('k') {
             if !self.dialog_open() {
                 self.open_palette();
+            }
+            return true;
+        }
+        if event.is_command('h') {
+            if self.showing_keys {
+                self.close_keys();
+            } else if !self.dialog_open() {
+                self.open_keys();
             }
             return true;
         }
@@ -1130,6 +1160,22 @@ impl State {
         self.palette = None;
     }
 
+    pub fn open_keys(&mut self) {
+        self.palette = None;
+        self.showing_keys = true;
+    }
+
+    pub fn close_keys(&mut self) {
+        self.showing_keys = false;
+    }
+
+    /// Every command with a key, whether it can run now or not, in the palette's order.
+    pub fn keyed_commands(&self) -> Vec<Command> {
+        let mut commands = self.every_command();
+        commands.retain(|command| command.shortcut.is_some());
+        commands
+    }
+
     /// What the palette offers for what has been typed into it.
     pub fn palette_commands(&self) -> Vec<Command> {
         let typed = self.palette_text.text.to_lowercase();
@@ -1210,45 +1256,32 @@ impl State {
         self.refresh();
     }
 
-    /// Everything available right now, by topic. Actions on a file act on the one at the top of
-    /// the diff.
+    /// Everything available right now, by topic.
     fn commands(&self) -> Vec<Command> {
-        let open = Command::new("Repository", "Open", |s, _| s.open_opener()).shortcut("Ctrl+O");
+        let mut commands = self.every_command();
+        commands.retain(|command| command.available);
+        commands
+    }
+
+    /// Every command for the repository on screen, by topic, each saying whether it can run
+    /// right now. Actions on a file act on the one at the top of the diff.
+    fn every_command(&self) -> Vec<Command> {
+        let open = Command::new(APPLICATION, "Open repository", |s, _| s.open_opener()).shortcut("Ctrl+O");
+        let shortcuts = Command::new(APPLICATION, "Keyboard shortcuts", |s, _| s.open_keys()).shortcut(KEYS);
         if self.repo.is_none() {
-            return vec![open];
+            return vec![open, shortcuts];
         }
         let mut commands = Vec::new();
-        let mut offer = |available: bool, command: Command| {
-            if available {
-                commands.push(command);
-            }
-        };
+        let mut offer = |available: bool, command: Command| commands.push(Command { available, ..command });
         let idle = self.running.is_none();
         let diff = if self.showing_comments { &self.comment_sheet } else { &self.diff };
         let file = diff.visible_file();
         let files = diff.files().len();
 
-        if !self.showing_comments {
-            let name = self.diff.files().get(file).and_then(|diff| diff.path().rsplit('/').next()).unwrap_or_default();
-            offer(idle && !self.stageable(file).is_empty(), Command::new("File", format!("Stage {name}"), |s, _| s.stage_file(s.diff.visible_file())));
-            offer(idle && !self.unstageable(file).is_empty(), Command::new("File", format!("Unstage {name}"), |s, _| s.unstage_file(s.diff.visible_file())));
-            offer(idle && !self.discardable(file).is_empty(), Command::new("File", format!("Discard {name}"), |s, _| s.ask_to_discard(s.diff.visible_file())));
-        }
-
-        type Step = fn(&mut DiffState, bool, &mut Tx) -> bool;
-        let moves: [(bool, &str, &'static str, Step, bool); 4] = [
-            (file + 1 < files, "Next file", "]", DiffState::next_file, true),
-            (file > 0, "Previous file", "[", DiffState::next_file, false),
-            (files > 0, "Next hunk", "j", DiffState::next_hunk, true),
-            (files > 0, "Previous hunk", "k", DiffState::next_hunk, false),
-        ];
-        for (available, label, key, step, forward) in moves {
-            offer(available, Command::new("Go to", label, move |s, tx| _ = step(s.active_diff(), forward, tx)).shortcut(key));
-        }
-
-        for kind in Kind::ALL {
-            offer(self.showing_comments || kind != self.kind, Command::new("Review", kind.label(), move |s, _| s.select_kind(kind)));
-        }
+        offer(self.can_open(), open);
+        offer(true, shortcuts);
+        let to_copy = self.comments_to_copy().len();
+        offer(to_copy > 0, Command::new(APPLICATION, copy_label(to_copy), State::copy_open_comments).shortcut(COPY));
 
         offer(self.can_stage_all(), Command::new("Git", "Stage all", |s, _| s.run(Action::StageAll)));
         offer(self.can_unstage_all(), Command::new("Git", "Unstage all", |s, _| s.run(Action::UnstageAll)));
@@ -1273,17 +1306,40 @@ impl State {
         if let Some(label) = head {
             offer(true, Command::new("Git", label, State::open_head_pull_request));
         }
-        offer(true, Command::new("Git", "Switch branch", |s, _| s.open_switcher()).shortcut("Ctrl+B"));
+        offer(true, Command::new("Git", "Switch branch", |s, _| s.open_switcher()).shortcut("Ctrl+B").alias("Ctrl+Shift+B"));
         offer(self.can_fetch(), Command::new("Git", "Fetch", |s, _| s.run(Action::Fetch)).shortcut(FETCH));
         offer(idle, Command::new("Git", "Pull", |s, _| s.run(Action::Pull)).shortcut(PULL));
         offer(self.can_push(), Command::new("Git", "Push", |s, _| s.run(Action::Push)).shortcut(PUSH));
         offer(true, Command::new("Git", "Remotes", |s, _| s.open_remotes()));
         offer(true, Command::new("Git", "Refresh", |s, _| s.refresh_all()));
 
-        offer(!self.showing_comments, Command::new("Comments", "Show all", |s, _| s.toggle_comments()));
-        let to_copy = self.comments_to_copy().len();
-        offer(to_copy > 0, Command::new("Comments", copy_label(to_copy), State::copy_open_comments));
-        offer(self.can_open(), open);
+        for (kind, key) in Kind::ALL.into_iter().zip(VIEWS) {
+            offer(self.showing_comments || kind != self.kind, Command::new("View", kind.label(), move |s, _| s.select_kind(kind)).shortcut(key));
+        }
+        offer(!self.showing_comments, Command::new("View", "Comments", |s, _| s.toggle_comments()).shortcut(COMMENTS));
+        let (layout, other) = match self.diff.mode() {
+            DiffMode::Split => ("Show unified", DiffMode::Unified),
+            _ => ("Show split", DiffMode::Split),
+        };
+        offer(true, Command::new("View", layout, move |s, _| s.set_layout(other)).shortcut(LAYOUT));
+
+        if !self.showing_comments {
+            let name = self.diff.files().get(file).and_then(|diff| diff.path().rsplit('/').next()).unwrap_or_default();
+            offer(idle && !self.stageable(file).is_empty(), Command::new("File", format!("Stage {name}"), |s, _| s.stage_file(s.diff.visible_file())));
+            offer(idle && !self.unstageable(file).is_empty(), Command::new("File", format!("Unstage {name}"), |s, _| s.unstage_file(s.diff.visible_file())));
+            offer(idle && !self.discardable(file).is_empty(), Command::new("File", format!("Discard {name}"), |s, _| s.ask_to_discard(s.diff.visible_file())));
+        }
+
+        type Step = fn(&mut DiffState, bool, &mut Tx) -> bool;
+        let moves: [(bool, &str, &'static str, Step, bool); 4] = [
+            (file + 1 < files, "Next file", "]", DiffState::next_file, true),
+            (file > 0, "Previous file", "[", DiffState::next_file, false),
+            (files > 0, "Next hunk", "j", DiffState::next_hunk, true),
+            (files > 0, "Previous hunk", "k", DiffState::next_hunk, false),
+        ];
+        for (available, label, key, step, forward) in moves {
+            offer(available, Command::new("Navigation", label, move |s, tx| _ = step(s.active_diff(), forward, tx)).shortcut(key));
+        }
         commands
     }
 
@@ -1303,7 +1359,7 @@ impl State {
 
     fn dialog_open(&self) -> bool {
         let pickers = self.switcher.is_some() || self.shell.opener.is_some();
-        let dialogs = self.deleting.is_some() || self.confirming.is_some() || self.committing || self.stashing.is_some() || self.managing_remotes || self.action_failure.is_some();
+        let dialogs = self.deleting.is_some() || self.confirming.is_some() || self.committing || self.stashing.is_some() || self.managing_remotes || self.action_failure.is_some() || self.showing_keys;
         pickers || dialogs
     }
 
@@ -1554,6 +1610,7 @@ fn mark<T>(tree: &mut TreeModel<T>, id: &str) {
 /// What copying `count` open comments says it does.
 pub fn copy_label(count: usize) -> String {
     match count {
+        0 => "Copy open comments".to_owned(),
         1 => "Copy 1 open comment".to_owned(),
         n => format!("Copy {n} open comments"),
     }
@@ -1839,7 +1896,7 @@ mod tests {
         let (_fixture, mut state) = state();
         let ctrl = |key, shift| KeyEvent { key, mods: rune::Mods { ctrl: true, cmd: true, shift, ..rune::Mods::default() } };
 
-        state.on_key(&ctrl(Key::Command('c'), true), &mut Tx::default());
+        state.on_key(&ctrl(Key::Enter, false), &mut Tx::default());
         assert!(!state.committing, "nothing to commit");
 
         state.overview.files.insert("a.txt".into(), status(false, true));
@@ -1850,6 +1907,30 @@ mod tests {
         state.cancel_action();
         state.on_key(&ctrl(Key::Enter, false), &mut Tx::default());
         assert!(state.committing);
+    }
+
+    #[test]
+    fn the_keys_list_every_key_even_those_that_do_nothing_now() {
+        let (_fixture, mut state) = state();
+        state.overview.upstream = Some(Upstream { ahead: 0, behind: 0 });
+        let keys = state.keyed_commands().into_iter().map(|command| command.label).collect::<Vec<_>>();
+        assert!(keys.contains(&"Push".to_owned()) && keys.contains(&"Next file".to_owned()), "{keys:?}");
+        assert!(!state.commands().iter().any(|command| command.label == "Push"));
+
+        let ctrl = |key, shift| KeyEvent { key, mods: rune::Mods { ctrl: true, cmd: true, shift, ..rune::Mods::default() } };
+        state.overview.files.insert("a.txt".into(), status(false, true));
+        state.on_key(&ctrl(Key::Command('h'), false), &mut Tx::default());
+        state.on_key(&ctrl(Key::Enter, false), &mut Tx::default());
+        assert!(state.showing_keys && !state.committing, "the keys only list");
+
+        state.on_key(&ctrl(Key::Command('h'), false), &mut Tx::default());
+        assert!(!state.showing_keys);
+        state.on_key(&ctrl(Key::Command('2'), false), &mut Tx::default());
+        assert_eq!(state.kind, Kind::Changes);
+        state.on_key(&ctrl(Key::Command('0'), false), &mut Tx::default());
+        assert!(state.showing_comments);
+        state.on_key(&ctrl(Key::Command('2'), false), &mut Tx::default());
+        assert!(!state.showing_comments, "a view's key leaves the comments page");
     }
 
     #[test]
@@ -1868,17 +1949,17 @@ mod tests {
     }
 
     #[test]
-    fn the_palette_switches_to_any_other_review_kind_and_from_the_comments_page_to_any() {
+    fn the_palette_switches_to_any_other_view_and_from_the_comments_page_to_any() {
         let (_fixture, mut state) = state();
-        let reviews = |state: &mut State| {
+        let views = |state: &mut State| {
             state.open_palette();
-            state.palette_text = TextEdit::new("review".to_owned());
+            state.palette_text = TextEdit::new("view".to_owned());
             state.palette_commands().into_iter().map(|command| command.label).collect::<Vec<_>>()
         };
-        assert_eq!(reviews(&mut state), ["Changes", "Branches", "Commits", "Stashes"]);
+        assert_eq!(views(&mut state), ["Changes", "Branches", "Commits", "Stashes", "Comments", "Show unified"]);
 
         state.toggle_comments();
-        assert_eq!(reviews(&mut state), ["Staging", "Changes", "Branches", "Commits", "Stashes"]);
+        assert_eq!(views(&mut state), ["Staging", "Changes", "Branches", "Commits", "Stashes", "Show unified"]);
         state.run_command(3, &mut Tx::default());
         assert_eq!((state.kind, state.showing_comments), (Kind::Commits, false));
     }
@@ -1969,10 +2050,10 @@ mod tests {
     }
 
     #[test]
-    fn a_window_without_a_repository_offers_only_to_open_one() {
+    fn a_window_without_a_repository_offers_only_to_open_one_and_its_keys() {
         let state = State::new(Some(Opened::Folder(PathBuf::from("/somewhere"))), Shell::default());
 
-        assert_eq!(state.commands().into_iter().map(|command| command.title()).collect::<Vec<_>>(), ["Repository: Open"]);
+        assert_eq!(state.commands().into_iter().map(|command| command.title()).collect::<Vec<_>>(), ["Application: Open repository", "Application: Keyboard shortcuts"]);
         assert_eq!(state.not_repository, Some(PathBuf::from("/somewhere")));
     }
 

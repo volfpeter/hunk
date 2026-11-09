@@ -12,7 +12,7 @@ The name in the bar comes from the repository's `origin` remote, like `owner/pro
 
 ## Pick what to review
 
-The bar at the top picks what you're looking at, from the narrowest to the widest:
+The bar at the top picks the view, what you're looking at, from the narrowest to the widest:
 
 - **Staging:** what changed since you last staged. It's what opens the first time.
 - **Changes:** everything not committed yet
@@ -22,7 +22,7 @@ The bar at the top picks what you're looking at, from the narrowest to the wides
 
 The pick holds for every repository, and the next time you start the app.
 
-**Unified** and **Split**, in the diff's top row, switch how it is laid out. The choice holds for every diff and repository, and the next time you start the app. That row also says what the diff compares and how much changed.
+**Unified** and **Split**, in the diff's top row, switch how it is laid out, as does **Ctrl+\\**. The choice holds for every diff and repository, and the next time you start the app. That row also says what the diff compares and how much changed.
 
 The file list and the diff go by path, folders first.
 
@@ -54,21 +54,21 @@ A comment remembers the lines it was written on. Whenever the repository changes
 
 If the lines are gone, the comment is marked **outdated** rather than lost. It keeps showing the code it was written on, and recovers if that code comes back.
 
-A comment appears in any review that contains its lines, not only the one you wrote it in. Lines in a fold count: the comment shows once the fold is open, and **Show in diff** on the comments page opens the fold. You can comment on unfolded lines too. An outdated comment has nowhere to sit in the diff, so **Show in diff** shows it above the diff.
+A comment appears in any view that contains its lines, not only the one you wrote it in. Lines in a fold count: the comment shows once the fold is open, and **Show in diff** on the comments page opens the fold. You can comment on unfolded lines too. An outdated comment has nowhere to sit in the diff, so **Show in diff** shows it above the diff.
 
 ## See every comment
 
-**Comments**, the speech bubble on the right of the bar, shows how many comments are open. Press it for a page of every comment, from any review: open ones first, then outdated ones, then resolved ones. Press it again, or pick a review in the bar, to go back.
+**Comments**, the speech bubble on the right of the bar, shows how many comments are open. Press it, or **Ctrl+0**, for a page of every comment, from any view: open ones first, then outdated ones, then resolved ones. Press it again, or pick a view in the bar, to go back.
 
-Each comment sits under the code it was written on, with a few lines around it, as that code was when you wrote it. So an outdated comment still shows what it was about, and its line numbers can differ from where the comment is now, which its header says. The header also names the review it was written in and its status.
+Each comment sits under the code it was written on, with a few lines around it, as that code was when you wrote it. So an outdated comment still shows what it was about, and its line numbers can differ from where the comment is now, which its header says. The header also names the view it was written in and its status.
 
 Resolved comments start closed: open one with the arrow by its file name. What you open or close stays so until the comment is resolved or reopened.
 
-**Show in diff** in a comment's header opens its review at the comment. A commit, branch or stash that is gone has no review to open.
+**Show in diff** in a comment's header opens its view at the comment. A commit, branch or stash that is gone has nothing to open.
 
 ## Hand comments to an agent
 
-**Copy 3 open comments**, at the top of the comments page or in the [command palette](#commands), copies them as one prompt, with the file, lines and code each one refers to. Paste it into your coding agent. Outdated comments are left out, as their code is gone. **Copy** in a comment's header copies that one alone, outdated or not.
+**Copy 3 open comments**, at the top of the comments page or in the [command palette](#commands), or **Ctrl+Shift+C**, copies them as one prompt, with the file, lines and code each one refers to. Paste it into your coding agent. Outdated comments are left out, as their code is gone. **Copy** in a comment's header copies that one alone, outdated or not.
 
 Once a comment is dealt with, press **Resolve** on it. Resolved comments leave the diff and future prompts, but stay at the end of the comments page. Press **Reopen** on one to bring it back.
 
@@ -81,15 +81,15 @@ Each row has **Stage** or **Unstage**. On a folder, it acts on every file under 
 Each file in the diff has its buttons in its header:
 
 - **Stage** and **Unstage** work on the whole file.
-- **Discard** drops what the review shows for that file, after asking. In **Changes** it goes back to the last commit, and in **Staging** back to what you staged. Either way a new file is deleted. This can't be undone.
+- **Discard** drops what the diff shows for that file, after asking. In **Changes** it goes back to the last commit, and in **Staging** back to what you staged. Either way a new file is deleted. This can't be undone.
 
 **Stage all** above the unstaged list and **Unstage all** above the staged list act on everything at once. The [command palette](#commands) has them too.
 
-To commit, press **Commit** at the right of the bar, the dot on a line, which shows how many files are staged, **Ctrl+Enter** or **Ctrl+Shift+C** (or run **Git: Commit** from the [command palette](#commands)), write a message and press the dialog's **Commit**, or **Ctrl+Enter**. On its left, the dialog sums up what the commit takes: new, changed and deleted files. It also lists what stays uncommitted, marking files the commit takes only part of, which often means you forgot to stage something. With nothing staged, the commit takes everything, new files included. **Enter** starts a new line. Your commit hooks run as usual. Closing the dialog keeps the message, and so does a commit that fails.
+To commit, press **Commit** at the right of the bar, the dot on a line, which shows how many files are staged, **Ctrl+Enter** (or run **Git: Commit** from the [command palette](#commands)), write a message and press the dialog's **Commit**, or **Ctrl+Enter**. On its left, the dialog sums up what the commit takes: new, changed and deleted files. It also lists what stays uncommitted, marking files the commit takes only part of, which often means you forgot to stage something. With nothing staged, the commit takes everything, new files included. **Enter** starts a new line. Your commit hooks run as usual. Closing the dialog keeps the message, and so does a commit that fails.
 
 ## Branches and stashes
 
-- **Branches:** the branch you're on is picked when you open it. Select another and press **Check out** to switch to it. To switch or start a branch, see [Switch branches](#switch-branches). Whichever way you switch, even from a terminal, the review moves to the branch you're now on.
+- **Branches:** the branch you're on is picked when you open it. Select another and press **Check out** to switch to it. To switch or start a branch, see [Switch branches](#switch-branches). Whichever way you switch, even from a terminal, the view moves to the branch you're now on.
 - **Ctrl+Shift+S**, or **Git: Stash** in the [command palette](#commands), puts changes aside. Give the stash a name if you like, and pick what it takes: your changes and new files, your changes alone, or only what's staged.
 - **Stashes:** select one and press **Apply** to bring it back and keep it, **Pop** to bring it back and remove it, or **Drop** to delete it, which asks first. Double-clicking a stash applies it.
 
@@ -121,8 +121,10 @@ They use your own Git setup, but can't answer prompts: if Git needs a password i
 
 ## Commands
 
-**Ctrl+K** opens a list of everything you can do right now. Each command starts with its topic, such as **Git:** or **Review:**. Type to filter, by topic too, use the arrow keys to pick and **Enter** to run the command marked with **›**. Actions on a file act on the one at the top of the diff, and those on a branch or stash on the one selected in the list.
+**Ctrl+K** opens a list of everything you can do right now. Each command starts with its topic, such as **Git:** or **View:**. Type to filter, by topic too, use the arrow keys to pick and **Enter** to run the command marked with **›**. Actions on a file act on the one at the top of the diff, and those on a branch or stash on the one selected in the list.
 
-The list also moves through the diff, switches to another review and opens another repository. A command with a key shows it, to use without the list: **]** and **[** go to the next and previous file, **j** and **k** to the next and previous change.
+The list also moves through the diff, switches to another view and opens another repository. A command with a key shows it, to use without the list: **]** and **[** go to the next and previous file, **j** and **k** to the next and previous change.
 
-Keys follow a pattern: **Ctrl** with a letter opens something to pick from, like **Ctrl+K**, **Ctrl+O** and **Ctrl+B**, and **Ctrl+Shift** with a letter or arrow runs a Git operation.
+Keys follow a pattern: **Ctrl** with a letter opens something to pick from, like **Ctrl+K**, **Ctrl+O** and **Ctrl+B**, and **Ctrl+Shift** with a letter or arrow runs a Git operation, or copies the open comments with **Ctrl+Shift+C**. **Ctrl+1** to **Ctrl+5** switch to the views in the bar's order, and **Ctrl+0** opens the comments page.
+
+**Ctrl+H**, or the question mark at the far right of the bar, lists every keyboard shortcut, grouped as the palette groups its commands, with a second key where a command has one. It lists them all, including those that do nothing right now, like Push with nothing to send. **Ctrl+H** again, or **Escape**, closes it.
