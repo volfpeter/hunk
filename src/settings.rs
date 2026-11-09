@@ -5,6 +5,7 @@ use std::path::PathBuf;
 use rune_kit::diff::DiffMode;
 use serde::{Deserialize, Serialize};
 
+use crate::app::Kind;
 use crate::kept;
 
 const FILE_NAME: &str = "settings.json";
@@ -22,21 +23,25 @@ struct StoreFile {
     version: u32,
     #[serde(with = "LayoutName")]
     layout: DiffMode,
+    #[serde(default)]
+    kind: Kind,
 }
 
-/// The settings, written in the background as they change. The default is split, and keeps
-/// nothing.
+/// The settings, written in the background as they change. The default is split on staging,
+/// and keeps nothing.
 #[derive(Clone, Debug)]
 pub struct Settings {
     /// Where they are kept, if the platform has a place for app state.
     file: Option<PathBuf>,
     /// How every diff lays out its two sides.
     layout: DiffMode,
+    /// The kind of review on screen.
+    kind: Kind,
 }
 
 impl Default for Settings {
     fn default() -> Settings {
-        Settings { file: None, layout: DiffMode::Split }
+        Settings { file: None, layout: DiffMode::Split, kind: Kind::default() }
     }
 }
 
@@ -45,7 +50,8 @@ impl Settings {
     pub fn load() -> Settings {
         let file = kept::path(FILE_NAME);
         let stored = file.as_deref().and_then(kept::read::<StoreFile>).filter(|stored| stored.version == VERSION);
-        Settings { layout: stored.map_or(Settings::default().layout, |stored| stored.layout), file }
+        let Some(stored) = stored else { return Settings { file, ..Settings::default() } };
+        Settings { file, layout: stored.layout, kind: stored.kind }
     }
 
     pub fn layout(&self) -> DiffMode {
@@ -54,8 +60,23 @@ impl Settings {
 
     pub fn set_layout(&mut self, layout: DiffMode) {
         self.layout = layout;
+        self.save();
+    }
+
+    pub fn kind(&self) -> Kind {
+        self.kind
+    }
+
+    pub fn set_kind(&mut self, kind: Kind) {
+        if kind != self.kind {
+            self.kind = kind;
+            self.save();
+        }
+    }
+
+    fn save(&self) {
         if let Some(file) = self.file.clone() {
-            kept::save(file, StoreFile { version: VERSION, layout });
+            kept::save(file, StoreFile { version: VERSION, layout: self.layout, kind: self.kind });
         }
     }
 }

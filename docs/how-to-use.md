@@ -14,11 +14,13 @@ The name in the bar comes from the repository's `origin` remote, like `owner/pro
 
 The bar at the top picks what you're looking at, from the narrowest to the widest:
 
-- **Staging:** what changed since you last staged. It's what opens first.
+- **Staging:** what changed since you last staged. It's what opens the first time.
 - **Changes:** everything not committed yet
 - **Branches:** what a branch added since it left its parent: the branch it grew from, else the default branch
 - **Commits:** any of the latest 200 on the current branch
 - **Stashes:** what a stash holds
+
+The pick holds for every repository, and the next time you start the app.
 
 **Unified** and **Split**, in the diff's top row, switch how it is laid out. The choice holds for every diff and repository, and the next time you start the app. That row also says what the diff compares and how much changed.
 
@@ -89,7 +91,7 @@ To commit, press **Commit** at the right of the bar, **Ctrl+Enter** or **Ctrl+Sh
 
 - **Branches:** the branch you're on is picked when you open it. Select another and press **Check out** to switch to it. To switch or start a branch, see [Switch branches](#switch-branches). Whichever way you switch, even from a terminal, the review moves to the branch you're now on.
 - **Ctrl+Shift+S**, or **Git: Stash** in the [command palette](#commands), puts changes aside. Give the stash a name if you like, and pick what it takes: your changes and new files, your changes alone, or only what's staged.
-- **Stashes:** select one and press **Apply** to bring it back and keep it, **Pop** to bring it back and remove it, or **Drop** to delete it, which asks first.
+- **Stashes:** select one and press **Apply** to bring it back and keep it, **Pop** to bring it back and remove it, or **Drop** to delete it, which asks first. Double-clicking a stash applies it.
 
 ## Switch branches
 
@@ -105,7 +107,7 @@ Type a name no branch has, and the list offers **Create branch** with it, starti
 
 ## Pull and push
 
-**Pull** (the arrow down) and **Push** (the arrow up) sit at the right of the bar, each with the number of commits there are to get or send, when there are any. Hover them for their keys. **Ctrl+Shift+↓** pulls and **Ctrl+Shift+↑** pushes. A branch that was never pushed goes to `origin`.
+**Pull** (the arrow down) and **Push** (the arrow up) sit at the right of the bar, each with the number of commits there are to get or send when either has some, so both show a count, even if one is 0. Hover them for their keys. **Ctrl+Shift+↓** pulls and **Ctrl+Shift+↑** pushes. A branch that was never pushed goes to `origin`.
 
 They use your own Git setup, but can't answer prompts: if Git needs a password it fails and shows you why. When anything fails, you see what Git said. When it works, a notice in the bottom right says what happened, for a few seconds; staging and unstaging show in the lists instead.
 

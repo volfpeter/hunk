@@ -181,7 +181,7 @@ Tasks:
 - [x] Fetch, on Ctrl+Shift+F
 - [x] Add and remove remotes from a dialog
 
-### Step 4e: Bar and Comments page
+### DONE - Step 4e: Bar and Comments page
 
 The bar mixed reviews with something that isn't one, and named its actions badly. The Comments tab showed one comment at a time, inside a review's diff, beside a file tree that meant nothing there.
 

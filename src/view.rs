@@ -164,8 +164,10 @@ fn bar(s: &State, k: &Kit) -> El {
         .on_press(State::start_commit);
     let behind = s.overview.upstream.map_or(0, |upstream| upstream.behind);
     let ahead = s.overview.upstream.map_or(0, |upstream| upstream.ahead);
-    let pull = sync_button(k, &PULL_ICON, "Pull", behind, PULL, s.running.is_some(), |s| s.run(Action::Pull));
-    let push = sync_button(k, &PUSH_ICON, "Push", ahead, PUSH, !s.can_push(), |s| s.run(Action::Push));
+    // Both count or neither, so one count doesn't widen its button alone.
+    let counted = |commits| (ahead > 0 || behind > 0).then_some(commits);
+    let pull = sync_button(k, &PULL_ICON, "Pull", counted(behind), PULL, s.running.is_some(), |s| s.run(Action::Pull));
+    let push = sync_button(k, &PUSH_ICON, "Push", counted(ahead), PUSH, !s.can_push(), |s| s.run(Action::Push));
 
     let repository = head_button(s.repo_name(), "Open another repository", "Ctrl+O").disabled(!s.can_open()).on_press(State::open_opener);
     let branch = head_button(s.overview.head.clone(), "Switch branch", "Ctrl+B").variant(ButtonVariant::GhostMuted).on_press(State::open_switcher);
@@ -188,11 +190,11 @@ fn bar(s: &State, k: &Kit) -> El {
         .child(push.key("push"))
 }
 
-/// A button of the bar that moves commits, showing how many there are to move, if any.
-fn sync_button(k: &Kit, glyph: &'static Icon, label: &str, commits: u32, shortcut: &str, disabled: bool, act: fn(&mut State)) -> El {
-    if commits == 0 {
+/// A button of the bar that moves commits, showing how many there are to move when given.
+fn sync_button(k: &Kit, glyph: &'static Icon, label: &str, commits: Option<u32>, shortcut: &str, disabled: bool, act: fn(&mut State)) -> El {
+    let Some(commits) = commits else {
         return IconButton::new(glyph).variant(IconButtonVariant::Ghost).label(label).shortcut(shortcut).disabled(disabled).on_press(act).build(k);
-    }
+    };
     let button = Button::new(format!("{label}, {commits} commits")).icon(glyph).variant(ButtonVariant::Ghost).help(label).shortcut(shortcut);
     button.label_with(move |font, ink| text(commits.to_string()).font(font).color(ink)).disabled(disabled).on_press(act).build(k)
 }
@@ -239,7 +241,9 @@ fn entries(s: &State, k: &Kit) -> El {
     let list = Tree::new(|s: &State| &s.list, |s: &mut State| &mut s.list, |entry: &Entry| entry.title.as_str())
         .name(s.kind.label())
         .row(move |entry, _| TreeItem::new(entry.title.clone()).trailing(one_line(entry.detail.clone()).truncate_head().max_w(DETAIL_MAX_WIDTH).font(detail_font).color(detail_color)))
-        .on_select(|s: &mut State, _, _| s.show_selected())
+        .on_select(|s: &mut State, _, _| s.show_selected());
+    let list = if s.kind == Kind::Stashes { list.on_open(|s: &mut State, stash, _| s.run(Action::ApplyStash(stash.to_owned()))) } else { list };
+    let list = list
         .build(s, k)
         .grow(1.0)
         .min_h(0.0);

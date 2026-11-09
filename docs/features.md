@@ -29,6 +29,7 @@ Everything the app does, to try at your own pace. A tick means Peter tried it an
 
 - [ ] Unified and split layout
 - [ ] Unified or Split holds for every diff, the comments page too, and across restarts
+- [ ] The picked review (Staging, Changes, …) holds across repositories and restarts
 - [ ] Syntax highlighting
 - [ ] Changed files list jumps to a file, and follows as you scroll
 - [ ] File list and diff use the same order, by path
@@ -94,10 +95,12 @@ Everything the app does, to try at your own pace. A tick means Peter tried it an
 - [ ] Stash from a dialog: changes and new files, changes alone, or only what's staged
 - [ ] Name a stash
 - [ ] Apply, pop and drop a stash
+- [ ] Double-click a stash to apply it
 - [ ] Pull (only tried against a local repository so far)
 - [ ] Push, publishing a new branch to `origin` (only tried against a local repository so far)
 - [ ] Commit, Pull and Push sit at the right of the bar, their keys in their tooltips
 - [ ] Pull and Push show how many commits there are to get or send
+- [ ] When either has commits to move, both show a count, 0 included, so they keep the same width
 - [ ] When git fails, its message shows in a dialog
 - [ ] A notice says what an operation did, for a few seconds: commit, stash, checkout, discard, pull, push and the rest, but not staging
 

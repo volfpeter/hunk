@@ -8,6 +8,7 @@ use std::time::Duration;
 use rune::{Key, KeyEvent, Latest, TextEdit, Tx, Waker};
 use rune_kit::diff::{Annotation, DiffMode, DiffState, FileDiff, LineRange, LineRef};
 use rune_kit::{FileNode, FileTree, TreeModel};
+use serde::{Deserialize, Serialize};
 
 use crate::action::{Action, Stashed};
 use crate::comments::{Anchor, Comment, Comments, prompt};
@@ -68,8 +69,10 @@ impl<T> Notice<T> {
 }
 
 /// The kinds of thing that can be reviewed.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum Kind {
+    #[default]
     Staging,
     Changes,
     Branches,
@@ -271,7 +274,7 @@ impl State {
         let mut state = State {
             repo,
             not_repository,
-            kind: Kind::Staging,
+            kind: shell.settings.kind(),
             showing_comments: false,
             overview: Overview::default(),
             list: TreeModel::new().key("list"),
@@ -504,6 +507,7 @@ impl State {
     pub fn select_kind(&mut self, kind: Kind) {
         self.showing_comments = false;
         self.kind = kind;
+        self.shell.settings.set_kind(kind);
         self.list.clear_selection();
         self.rebuild_list();
         self.show_selected();
@@ -1760,7 +1764,7 @@ mod tests {
     }
 
     #[test]
-    fn opening_another_repository_starts_afresh_but_for_the_diff_layout() {
+    fn opening_another_repository_starts_afresh_but_for_the_settings() {
         let (_fixture, mut state) = state();
         land(&mut state, Review::Changes, TWO_FILES);
         state.select_kind(Kind::Commits);
@@ -1772,7 +1776,7 @@ mod tests {
         state.show_opened(Opened::Repository(other.repo.clone(), Comments::load(&other.repo)));
 
         assert_eq!(state.repo.as_ref().map(Repo::root), Some(other.repo.root()));
-        assert_eq!((state.kind, state.showing_comments, state.diff.files().len()), (Kind::Staging, false, 0));
+        assert_eq!((state.kind, state.showing_comments, state.diff.files().len()), (Kind::Commits, false, 0));
         assert_eq!((state.diff.mode(), state.comment_sheet.mode()), (DiffMode::Unified, DiffMode::Unified));
         assert_eq!(state.shell.open_text.text, "~/elsewhere");
     }
