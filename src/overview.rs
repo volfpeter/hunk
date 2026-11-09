@@ -3,6 +3,7 @@
 
 use std::collections::HashMap;
 
+use crate::forge::Hosted;
 use crate::git::{Repo, Result};
 
 const COMMIT_LIMIT: &str = "200";
@@ -120,8 +121,8 @@ pub struct Overview {
     pub staged_lines: HashMap<String, LineCounts>,
     /// `None` when the current branch tracks nothing.
     pub upstream: Option<Upstream>,
-    /// `<user-or-org>/<project>`, from the remotes' URLs: `origin`'s first.
-    pub project: Option<String>,
+    /// Where the repository is on the web: at the first remote URL with a host, `origin`'s first.
+    pub hosted: Option<Hosted>,
 }
 
 impl Overview {
@@ -133,7 +134,7 @@ impl Overview {
             base: base_branch(repo, &branches)?,
             commits: commits(repo)?,
             remote_branches: remote_branches(repo, &remotes, &branches)?,
-            project: project(&remotes),
+            hosted: hosted(&remotes),
             remotes,
             branches,
             stashes: stashes(repo)?,
@@ -163,6 +164,19 @@ impl Overview {
         }
         plan
     }
+
+    /// What a forge calls the branch `name`: a remote's branch, like `origin/main`, goes by its
+    /// name there. `HEAD` is no branch.
+    pub fn forge_branch<'a>(&self, name: &'a str) -> Option<&'a str> {
+        if name == "HEAD" {
+            return None;
+        }
+        if self.branches.iter().any(|branch| branch.id == name) {
+            return Some(name);
+        }
+        let on_remote = self.remotes.iter().find_map(|remote| name.strip_prefix(remote.name.as_str())?.strip_prefix('/'));
+        Some(on_remote.unwrap_or(name))
+    }
 }
 
 /// The remotes in the order they were added, each with its first URL.
@@ -178,25 +192,10 @@ fn remotes(repo: &Repo) -> Result<Vec<Remote>> {
     Ok(remotes)
 }
 
-/// The name the first remote URL that has one gives the project, trying `origin`'s first.
-fn project(remotes: &[Remote]) -> Option<String> {
+/// Where the first remote URL with a host says the repository is, trying `origin`'s first.
+fn hosted(remotes: &[Remote]) -> Option<Hosted> {
     let origin = remotes.iter().filter(|remote| remote.name == "origin");
-    origin.chain(remotes).find_map(|remote| project_in(&remote.url))
-}
-
-/// `<user-or-org>/<project>` from the last two parts of a remote's URL, unless it has no host,
-/// as a path on this machine doesn't.
-fn project_in(url: &str) -> Option<String> {
-    let path = match url.split_once("://") {
-        Some((_, rest)) => rest.split_once('/').filter(|(host, _)| !host.is_empty())?.1,
-        // `[user@]host:path`, as ssh takes it.
-        None => url.split_once(':').filter(|(host, _)| !host.is_empty() && !host.contains('/'))?.1,
-    };
-    let path = path.trim_end_matches('/');
-    let path = path.strip_suffix(".git").unwrap_or(path);
-    let mut parts = path.rsplit('/').filter(|part| !part.is_empty());
-    let (project, owner) = (parts.next()?, parts.next()?);
-    Some(format!("{owner}/{project}"))
+    origin.chain(remotes).find_map(|remote| Hosted::parse(&remote.url))
 }
 
 fn head(repo: &Repo) -> Result<String> {
@@ -408,7 +407,7 @@ mod tests {
     #[test]
     fn names_the_project_after_a_remote_on_a_host_origin_first() {
         let fixture = Fixture::new();
-        let project = || Overview::load(&fixture.repo).unwrap().project;
+        let project = || Overview::load(&fixture.repo).unwrap().hosted.map(|hosted| hosted.name());
         assert_eq!(project(), None);
 
         fixture.git(&["remote", "add", "local", "/srv/git/thing.git"]);
@@ -417,6 +416,19 @@ mod tests {
         assert_eq!(project().as_deref(), Some("someone/thing"));
         fixture.git(&["remote", "add", "origin", "https://codeberg.org/org/thing/"]);
         assert_eq!(project().as_deref(), Some("org/thing"));
+    }
+
+    #[test]
+    fn a_forge_knows_a_remote_branch_by_its_name_there_and_head_as_no_branch() {
+        let overview = Overview {
+            branches: vec![Entry { id: "origin/odd".into(), title: String::new(), detail: String::new() }],
+            remotes: vec![Remote { name: "origin".into(), url: String::new() }],
+            ..Overview::default()
+        };
+        assert_eq!(overview.forge_branch("origin/main"), Some("main"));
+        assert_eq!(overview.forge_branch("origin/odd"), Some("origin/odd"), "a local branch keeps its name");
+        assert_eq!(overview.forge_branch("feature"), Some("feature"));
+        assert_eq!(overview.forge_branch("HEAD"), None);
     }
 
     #[test]
@@ -437,15 +449,6 @@ mod tests {
         let ids: Vec<String> = overview.remote_branches.iter().map(RemoteBranch::id).collect();
         assert_eq!(ids, ["origin/user/feature"]);
         assert_eq!(overview.remote_branches[0].name, "user/feature");
-    }
-
-    #[test]
-    fn a_project_is_the_last_two_parts_of_a_url_with_a_host() {
-        assert_eq!(project_in("ssh://git@host.example:2222/group/sub/repo.git").as_deref(), Some("sub/repo"));
-        assert_eq!(project_in("github.com:owner/repo").as_deref(), Some("owner/repo"));
-        assert_eq!(project_in("file:///srv/git/repo.git"), None);
-        assert_eq!(project_in("../repo"), None);
-        assert_eq!(project_in("https://host.example/repo"), None);
     }
 
     #[test]

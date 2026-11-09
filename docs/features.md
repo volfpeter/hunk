@@ -99,10 +99,27 @@ Everything the app does, to try at your own pace. A tick means Peter tried it an
 - [ ] Pull (only tried against a local repository so far)
 - [ ] Push, publishing a new branch to `origin` (only tried against a local repository so far)
 - [ ] Commit, Pull and Push sit at the right of the bar, their keys in their tooltips
+- [ ] The right of the bar is icons only, each with a count when there is one, its tooltip saying what it counts
+- [ ] Commit shows how many files are staged, and no count when none are
 - [ ] Pull and Push show how many commits there are to get or send
 - [ ] When either has commits to move, both show a count, 0 included, so they keep the same width
 - [ ] When git fails, its message shows in a dialog
 - [ ] A notice says what an operation did, for a few seconds: commit, stash, checkout, discard, pull, push and the rest, but not staging
+
+## Pull requests
+
+- [ ] In Branches, a branch on GitHub shows its pull request: number, title, and open, draft, merged or closed (needs `gh`, logged in)
+- [ ] Click it to open the pull request in the browser
+- [ ] A branch without one offers Create pull request, opening the forge's form comparing it with its parent, as the diff does
+- [ ] Works on Forgejo and Gitea too, which always offer Create pull request
+- [ ] Without `gh`, or when it can't look, Create pull request shows, its tooltip saying why
+- [ ] The default branch offers neither
+- [ ] The palette offers the same, under Git
+- [ ] The bar shows the current branch's pull request left of Commit: an icon and its number, the title and status in its tooltip
+- [ ] Its icon shows whether it is open, a draft, merged or closed, and only an open one is bright
+- [ ] Click it to open the pull request in the browser
+- [ ] Coming back to the window looks for pull requests again, so one created or merged in the browser shows
+- [ ] Refresh from the palette, or a fetch, looks for pull requests again
 
 ## Commands
 

@@ -12,6 +12,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::action::{Action, Stashed};
 use crate::comments::{Anchor, Comment, Comments, prompt};
+use crate::forge::Hosted;
+use crate::gh::{self, PullRequest};
 use crate::git::{Repo, Result};
 use crate::open::{Choice, Offer, Opened, resolve};
 use crate::overview::{Entry, FileStatus, LineCounts, Overview};
@@ -113,6 +115,19 @@ struct Shown {
 pub struct ActionFailure {
     pub action: &'static str,
     pub message: String,
+}
+
+/// A branch on a forge: the repository, and the branch's name there.
+type ForgeBranch = (Hosted, String);
+
+/// A branch's pull request, if it has one, or why looking for it failed.
+type Found = std::result::Result<Option<PullRequest>, String>;
+
+/// What the branch on screen has on its forge.
+pub enum PullRequestOffer {
+    Existing(PullRequest),
+    /// The forge's form for a new one, and why looking for one failed, if it did.
+    New { url: String, failure: Option<String> },
 }
 
 /// What a palette command does.
@@ -255,6 +270,9 @@ pub struct State {
     overview_load: Latest<Result<Overview>>,
     patch_load: Latest<Result<Loaded>>,
     action_load: Latest<(Action, Result<()>)>,
+    /// What GitHub said about each branch's pull request, when last asked.
+    pull_requests: HashMap<ForgeBranch, Found>,
+    pull_request_load: Latest<Vec<(ForgeBranch, Found)>>,
     watch: Option<RepoWatch>,
     pub shell: Shell,
 }
@@ -314,6 +332,8 @@ impl State {
             overview_load: Latest::default(),
             patch_load: Latest::default(),
             action_load: Latest::default(),
+            pull_requests: HashMap::new(),
+            pull_request_load: Latest::default(),
             watch: None,
             shell,
         };
@@ -348,8 +368,10 @@ impl State {
         let patch = self.patch_load.take();
         let comments = self.comments.poll();
         let action = self.action_load.take();
+        let pull_requests = self.pull_request_load.take();
         let (repo_changed, watch_failure) = self.watch.as_ref().map_or((false, None), RepoWatch::take);
-        let landed = opened_failed || offer.is_some() || overview.is_some() || patch.is_some() || comments || action.is_some() || watch_failure.is_some();
+        let landed = opened_failed || offer.is_some() || overview.is_some() || patch.is_some() || comments || action.is_some() || pull_requests.is_some() || watch_failure.is_some();
+        self.pull_requests.extend(pull_requests.into_iter().flatten());
         if let Some(offer) = offer {
             self.show_offer(offer);
         }
@@ -424,7 +446,7 @@ impl State {
 
     /// `<user-or-org>/<project>` when a remote says, else the name of the worktree's folder.
     pub fn repo_name(&self) -> String {
-        self.overview.project.clone().or_else(|| self.repo.as_ref().map(Repo::name)).unwrap_or_default()
+        self.overview.hosted.as_ref().map(Hosted::name).or_else(|| self.repo.as_ref().map(Repo::name)).unwrap_or_default()
     }
 
     /// Whether another repository can be opened: not while an action runs, whose outcome would
@@ -494,6 +516,20 @@ impl State {
     pub fn init_folder(&mut self) {
         if let Some(folder) = self.not_repository.clone() {
             self.shell.open_load.request(folder, |folder| Opened::init(&folder));
+        }
+    }
+
+    /// [`State::refresh`], asking the forge again about pull requests too.
+    pub fn refresh_all(&mut self) {
+        self.refresh();
+        self.look_for_pull_requests(true);
+    }
+
+    /// Asks the forge again about pull requests when the window comes back, as one may have been
+    /// opened or merged in the browser meanwhile.
+    pub fn on_focus(&mut self, focused: bool, _: &mut Tx) {
+        if focused {
+            self.look_for_pull_requests(true);
         }
     }
 
@@ -997,6 +1033,88 @@ impl State {
         }
     }
 
+    /// The branch the Branches review shows, on the forge, with its base there: none when the
+    /// base is no branch. `None` when the repository is on no forge, or the branch is compared
+    /// with itself.
+    fn branch_on_forge(&self) -> Option<(ForgeBranch, Option<&str>)> {
+        let Some(Review::Branch { base, branch }) = self.shown_review().filter(|_| self.kind == Kind::Branches) else { return None };
+        let hosted = self.overview.hosted.clone().filter(|_| base != branch)?;
+        Some(((hosted, branch.clone()), self.overview.forge_branch(base)))
+    }
+
+    /// The current branch on GitHub, unless it is the default branch.
+    fn head_on_github(&self) -> Option<ForgeBranch> {
+        let hosted = self.overview.hosted.clone().filter(Hosted::is_github)?;
+        let head = &self.overview.head;
+        let feature = *head != self.overview.base && self.overview.branches.iter().any(|branch| branch.id == *head);
+        feature.then(|| (hosted, head.clone()))
+    }
+
+    /// Asks GitHub for the pull requests of the current branch and of the branch on screen: those
+    /// it hasn't asked about, or all of them `again`.
+    fn look_for_pull_requests(&mut self, again: bool) {
+        let shown = self.branch_on_forge().map(|(branch, _)| branch).filter(|(hosted, _)| hosted.is_github());
+        let mut asked: Vec<ForgeBranch> = self.head_on_github().into_iter().chain(shown).filter(|branch| again || !self.pull_requests.contains_key(branch)).collect();
+        asked.dedup();
+        if asked.is_empty() {
+            return;
+        }
+        let look = |asked: Vec<ForgeBranch>| {
+            asked.into_iter().map(|branch| {
+                let found = gh::pull_request(&branch.0, &branch.1);
+                (branch, found)
+            })
+            .collect()
+        };
+        if again {
+            self.pull_request_load.request(asked, look);
+        } else {
+            self.pull_request_load.request_if_changed(&asked, look);
+        }
+    }
+
+    /// The current branch's pull request, once GitHub said.
+    pub fn head_pull_request(&self) -> Option<&PullRequest> {
+        self.pull_requests.get(&self.head_on_github()?)?.as_ref().ok()?.as_ref()
+    }
+
+    /// What the branch on screen has on its forge, once known: on GitHub, that takes asking.
+    pub fn pull_request_offer(&self) -> Option<PullRequestOffer> {
+        let ((hosted, branch), base) = self.branch_on_forge()?;
+        let new = |failure| PullRequestOffer::New { url: hosted.compare_url(base, &branch), failure };
+        if !hosted.is_github() {
+            return Some(new(None));
+        }
+        Some(match self.pull_requests.get(&(hosted.clone(), branch.clone()))? {
+            Ok(Some(existing)) => PullRequestOffer::Existing(existing.clone()),
+            Ok(None) => new(None),
+            Err(failure) => new(Some(failure.clone())),
+        })
+    }
+
+    /// Opens the pull request of the branch on screen in the browser, or the forge's form for one.
+    pub fn open_pull_request(&mut self, tx: &mut Tx) {
+        let url = match self.pull_request_offer() {
+            Some(PullRequestOffer::Existing(existing)) => existing.url,
+            Some(PullRequestOffer::New { url, .. }) => url,
+            None => return,
+        };
+        self.open_in_browser(&url, tx);
+    }
+
+    /// Opens the current branch's pull request in the browser.
+    pub fn open_head_pull_request(&mut self, tx: &mut Tx) {
+        if let Some(url) = self.head_pull_request().map(|found| found.url.clone()) {
+            self.open_in_browser(&url, tx);
+        }
+    }
+
+    fn open_in_browser(&mut self, url: &str, tx: &mut Tx) {
+        if let Err(error) = tx.open_url(url) {
+            self.action_failure = Some(ActionFailure { action: "Open pull request", message: format!("{url}: {error}") });
+        }
+    }
+
     /// Whether pushing can do anything: a branch without an upstream can always be published.
     pub fn can_push(&self) -> bool {
         self.running.is_none() && self.overview.upstream.is_none_or(|upstream| upstream.ahead > 0)
@@ -1076,6 +1194,7 @@ impl State {
             Ok(()) => {
                 match action {
                     Action::Commit(_) | Action::CommitAll(_) => self.commit_text = TextEdit::default(),
+                    Action::Fetch => self.look_for_pull_requests(true),
                     Action::AddRemote { .. } => {
                         self.remote_name_text = TextEdit::default();
                         self.remote_url_text = TextEdit::default();
@@ -1143,12 +1262,23 @@ impl State {
         if let Some(branch) = self.branch_to_check_out() {
             offer(idle, Command::new("Git", format!("Check out {branch}"), |s, _| s.check_out_selected()));
         }
+        let shown = self.branch_on_forge().zip(self.pull_request_offer()).map(|(((_, branch), _), offer)| match offer {
+            PullRequestOffer::Existing(found) => format!("Open pull request #{}", found.number),
+            PullRequestOffer::New { .. } => format!("Create pull request for {branch}"),
+        });
+        let head = self.head_pull_request().map(|found| format!("Open pull request #{}", found.number)).filter(|label| shown.as_ref() != Some(label));
+        if let Some(label) = shown {
+            offer(true, Command::new("Git", label, State::open_pull_request));
+        }
+        if let Some(label) = head {
+            offer(true, Command::new("Git", label, State::open_head_pull_request));
+        }
         offer(true, Command::new("Git", "Switch branch", |s, _| s.open_switcher()).shortcut("Ctrl+B"));
         offer(self.can_fetch(), Command::new("Git", "Fetch", |s, _| s.run(Action::Fetch)).shortcut(FETCH));
         offer(idle, Command::new("Git", "Pull", |s, _| s.run(Action::Pull)).shortcut(PULL));
         offer(self.can_push(), Command::new("Git", "Push", |s, _| s.run(Action::Push)).shortcut(PUSH));
         offer(true, Command::new("Git", "Remotes", |s, _| s.open_remotes()));
-        offer(true, Command::new("Git", "Refresh", |s, _| s.refresh()));
+        offer(true, Command::new("Git", "Refresh", |s, _| s.refresh_all()));
 
         offer(!self.showing_comments, Command::new("Comments", "Show all", |s, _| s.toggle_comments()));
         let to_copy = self.comments_to_copy().len();
@@ -1190,6 +1320,7 @@ impl State {
         self.overview_load.set_waker(waker.clone());
         self.patch_load.set_waker(waker.clone());
         self.action_load.set_waker(waker.clone());
+        self.pull_request_load.set_waker(waker.clone());
         self.comments.set_waker(waker.clone());
         self.watch = Some(RepoWatch::start(repo, waker));
         self.refresh();
@@ -1248,6 +1379,7 @@ impl State {
                 let files = files(&patch);
                 // The file lists go by the review on screen.
                 self.shown = Some(Shown { review, commit, patch });
+                self.look_for_pull_requests(false);
                 match unchanged {
                     Some(true) => {}
                     Some(false) => self.update_files(files, tx),
@@ -1894,6 +2026,56 @@ mod tests {
         assert_eq!(state.remote_to_add(), None);
         state.remote_name_text = TextEdit::new(" fork ".to_owned());
         assert_eq!(state.remote_to_add(), Some(Action::AddRemote { name: "fork".into(), url: "git@host.example:me/thing.git".into() }));
+    }
+
+    #[test]
+    fn a_branch_offers_its_pull_request_once_found_or_the_forges_form() {
+        let (_fixture, mut state) = state();
+        state.overview.head = "main".to_owned();
+        state.select_kind(Kind::Branches);
+        let offered = |state: &State| match state.pull_request_offer() {
+            Some(PullRequestOffer::Existing(found)) => Some(found.url),
+            Some(PullRequestOffer::New { url, .. }) => Some(url),
+            None => None,
+        };
+        land(&mut state, Review::Branch { base: "main".into(), branch: "main".into() }, "");
+        state.overview.hosted = Hosted::parse("git@codeberg.org:org/thing.git");
+        assert_eq!(offered(&state), None, "the default branch compared with itself");
+
+        // Landed before the remote is on GitHub, so nothing runs gh.
+        land(&mut state, Review::Branch { base: "main".into(), branch: "feature".into() }, "");
+        assert_eq!(offered(&state).as_deref(), Some("https://codeberg.org/org/thing/compare/main...feature"));
+
+        let github = Hosted::parse("git@github.com:org/thing.git").unwrap();
+        state.overview.hosted = Some(github.clone());
+        assert_eq!(offered(&state), None, "GitHub is asked first");
+        let found = PullRequest { number: 7, title: "Feature".into(), status: gh::Status::Open, url: "https://github.com/org/thing/pull/7".into() };
+        state.pull_requests.insert((github.clone(), "other".into()), Ok(Some(found.clone())));
+        assert_eq!(offered(&state), None, "an answer about another branch");
+        state.pull_requests.insert((github.clone(), "feature".into()), Ok(Some(found.clone())));
+        assert_eq!(offered(&state).as_deref(), Some("https://github.com/org/thing/pull/7"));
+        state.pull_requests.insert((github, "feature".into()), Err("gh isn't installed".into()));
+        assert_eq!(offered(&state).as_deref(), Some("https://github.com/org/thing/compare/main...feature"));
+    }
+
+    #[test]
+    fn the_current_branch_shows_its_pull_request_unless_it_is_the_default_branch() {
+        let (_fixture, mut state) = state();
+        let github = Hosted::parse("git@github.com:org/thing.git").unwrap();
+        state.overview = Overview {
+            head: "feature".into(),
+            base: "main".into(),
+            branches: ["main", "feature"].map(|name| Entry { id: name.to_owned(), title: name.to_owned(), detail: String::new() }).to_vec(),
+            hosted: Some(github.clone()),
+            ..Overview::default()
+        };
+        let found = PullRequest { number: 7, title: "Feature".into(), status: gh::Status::Open, url: "https://github.com/org/thing/pull/7".into() };
+        state.pull_requests.insert((github.clone(), "feature".into()), Ok(Some(found)));
+        state.pull_requests.insert((github, "main".into()), Ok(None));
+        assert_eq!(state.head_pull_request().map(|found| found.number), Some(7));
+
+        state.overview.head = "main".into();
+        assert_eq!(state.head_pull_request(), None);
     }
 
     #[test]

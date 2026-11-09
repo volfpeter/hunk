@@ -6,8 +6,9 @@ use rune_kit::diff::{Annotation, DiffMode, DiffView};
 use rune_kit::{Badge, Button, ButtonVariant, ControlSize, Dialog, FileNode, IconButton, IconButtonVariant, Kit, RadioGroup, RadioItem, SegmentedControl, Spinner, TextArea, TextInput, Toast, ToastRegion, Tree, TreeItem, TreeModel, TreeStyle, root};
 
 use crate::action::{Action, Stashed};
-use crate::app::{COMMIT, Command, DRAFT_NOTE, Kind, PULL, PUSH, State, copy_label};
+use crate::app::{COMMIT, Command, DRAFT_NOTE, Kind, PULL, PUSH, PullRequestOffer, State, copy_label};
 use crate::comments::Comment;
+use crate::gh::{PullRequest, Status};
 use crate::open::{Choice, tilde};
 use crate::overview::{CommitPlan, Entry, LineCounts};
 use crate::review::Review;
@@ -38,6 +39,8 @@ const PLACE_MAX_WIDTH: f32 = 360.0;
 /// The most width the repository's name and its branch each take from the bar.
 const HEAD_MAX_WIDTH: f32 = 160.0;
 const REMOTE_NAME_WIDTH: f32 = 140.0;
+/// The most width a pull request's number and title take from the list's header.
+const PULL_REQUEST_MAX_WIDTH: f32 = 200.0;
 
 /// Two points compared, neither leading to the other.
 static COMPARED: Icon = Icon {
@@ -51,6 +54,34 @@ static COMMIT_ICON: Icon = Icon {
     name: "hunk-commit",
     view: 16.0,
     body: r#"<circle cx="8" cy="8" r="2.75" stroke="currentColor" stroke-width="1.5" fill="none"/><path d="M1.5 8H5.25M10.75 8H14.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>"#,
+};
+
+/// A pull request: a branch's line coming back into another, the arrow pointing at it.
+static PULL_REQUEST_ICON: Icon = Icon {
+    name: "hunk-pull-request",
+    view: 16.0,
+    body: r#"<circle cx="4" cy="3.5" r="1.75" stroke="currentColor" stroke-width="1.5" fill="none"/><circle cx="4" cy="12.5" r="1.75" stroke="currentColor" stroke-width="1.5" fill="none"/><circle cx="12" cy="12.5" r="1.75" stroke="currentColor" stroke-width="1.5" fill="none"/><path d="M4 5.25V10.75M12 10.75V5.5C12 4.4 11.1 3.5 10 3.5H7.5M9 2L7.5 3.5L9 5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" fill="none"/>"#,
+};
+
+/// A draft pull request: the open one's line still dotted, not yet drawn back.
+static DRAFT_PULL_REQUEST_ICON: Icon = Icon {
+    name: "hunk-pull-request-draft",
+    view: 16.0,
+    body: r#"<circle cx="4" cy="3.5" r="1.75" stroke="currentColor" stroke-width="1.5" fill="none"/><circle cx="4" cy="12.5" r="1.75" stroke="currentColor" stroke-width="1.5" fill="none"/><circle cx="12" cy="12.5" r="1.75" stroke="currentColor" stroke-width="1.5" fill="none"/><path d="M4 5.25V10.75M12 9.25V8M12 5.75V4.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" fill="none"/>"#,
+};
+
+/// A merged pull request: a branch's line joined into another.
+static MERGED_PULL_REQUEST_ICON: Icon = Icon {
+    name: "hunk-pull-request-merged",
+    view: 16.0,
+    body: r#"<circle cx="4" cy="3.5" r="1.75" stroke="currentColor" stroke-width="1.5" fill="none"/><circle cx="4" cy="12.5" r="1.75" stroke="currentColor" stroke-width="1.5" fill="none"/><circle cx="12" cy="9" r="1.75" stroke="currentColor" stroke-width="1.5" fill="none"/><path d="M4 5.25V10.75M4 5.25C4 7.5 6.5 9 10.25 9" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" fill="none"/>"#,
+};
+
+/// A closed pull request: the open one's arrow crossed out.
+static CLOSED_PULL_REQUEST_ICON: Icon = Icon {
+    name: "hunk-pull-request-closed",
+    view: 16.0,
+    body: r#"<circle cx="4" cy="3.5" r="1.75" stroke="currentColor" stroke-width="1.5" fill="none"/><circle cx="4" cy="12.5" r="1.75" stroke="currentColor" stroke-width="1.5" fill="none"/><circle cx="12" cy="12.5" r="1.75" stroke="currentColor" stroke-width="1.5" fill="none"/><path d="M4 5.25V10.75M12 10.75V7.75M10.25 2.25L13.75 5.75M13.75 2.25L10.25 5.75" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" fill="none"/>"#,
 };
 
 /// Pulling: down onto a base.
@@ -148,26 +179,33 @@ fn bar(s: &State, k: &Kit) -> El {
     let kinds = SegmentedControl::new(&Kind::ALL.map(Kind::label), selected).fit().on_pick(|s: &mut State, i, _: &mut Tx| s.select_kind(Kind::ALL[i]));
 
     let open = s.comments.open().len();
-    let comments = Button::new(format!("Comments, {open} open"))
-        .icon(&COMMENTS_ICON)
-        .variant(ButtonVariant::Ghost)
-        .expanded(s.showing_comments)
-        .help(if s.showing_comments { "Back to the review" } else { "Every comment, with the code it was written on" })
-        .label_with(move |font, ink| text(if open > 0 { format!("Comments {open}") } else { "Comments".to_owned() }).font(font).color(ink))
-        .on_press(State::toggle_comments);
-    let commit = Button::new("Commit")
-        .icon(&COMMIT_ICON)
-        .variant(ButtonVariant::Ghost)
-        .help("Commit what is staged, or everything when nothing is")
-        .shortcut(COMMIT)
-        .disabled(!s.can_start_commit())
-        .on_press(State::start_commit);
+    let comments_help = match open {
+        _ if s.showing_comments => "Back to the review".to_owned(),
+        0 => "Comments".to_owned(),
+        n => format!("Comments, {n} open"),
+    };
+    let comments = BarButton::new(&COMMENTS_ICON, comments_help).count((open > 0).then(|| open.to_string())).expanded(s.showing_comments);
+    let comments = comments.build(k, |s, _| s.toggle_comments());
+    let staged = s.overview.staged_files();
+    let commit_help = match staged {
+        _ if !s.can_start_commit() => "Nothing to commit".to_owned(),
+        0 => "Commit everything".to_owned(),
+        n => format!("Commit {}", plural(n, "staged file")),
+    };
+    let commit = BarButton::new(&COMMIT_ICON, commit_help).count((staged > 0).then(|| staged.to_string())).shortcut(COMMIT).disabled(!s.can_start_commit());
+    let commit = commit.build(k, |s, _| s.start_commit());
     let behind = s.overview.upstream.map_or(0, |upstream| upstream.behind);
     let ahead = s.overview.upstream.map_or(0, |upstream| upstream.ahead);
     // Both count or neither, so one count doesn't widen its button alone.
-    let counted = |commits| (ahead > 0 || behind > 0).then_some(commits);
-    let pull = sync_button(k, &PULL_ICON, "Pull", counted(behind), PULL, s.running.is_some(), |s| s.run(Action::Pull));
-    let push = sync_button(k, &PUSH_ICON, "Push", counted(ahead), PUSH, !s.can_push(), |s| s.run(Action::Push));
+    let counted = |commits: u32| (ahead > 0 || behind > 0).then(|| commits.to_string());
+    let moving = |label: &str, commits: u32, way: &str| match commits {
+        0 => label.to_owned(),
+        n => format!("{label}, {} to {way}", plural(n as usize, "commit")),
+    };
+    let pull = BarButton::new(&PULL_ICON, moving("Pull", behind, "get")).count(counted(behind)).shortcut(PULL).disabled(s.running.is_some());
+    let pull = pull.build(k, |s, _| s.run(Action::Pull));
+    let push = BarButton::new(&PUSH_ICON, moving("Push", ahead, "send")).count(counted(ahead)).shortcut(PUSH).disabled(!s.can_push());
+    let push = push.build(k, |s, _| s.run(Action::Push));
 
     let repository = head_button(s.repo_name(), "Open another repository", "Ctrl+O").disabled(!s.can_open()).on_press(State::open_opener);
     let branch = head_button(s.overview.head.clone(), "Switch branch", "Ctrl+B").variant(ButtonVariant::GhostMuted).on_press(State::open_switcher);
@@ -184,19 +222,98 @@ fn bar(s: &State, k: &Kit) -> El {
         .child(kinds.build(k))
         .child(row().grow(1.0))
         .children(s.running.map(|action| progress(k, action)))
-        .child(comments.build(k).key("comments"))
-        .child(commit.build(k).key("commit"))
+        .child(comments.key("comments"))
+        .children(s.head_pull_request().map(|found| head_pull_request(k, found)))
+        .child(commit.key("commit"))
         .child(pull.key("pull"))
         .child(push.key("push"))
 }
 
-/// A button of the bar that moves commits, showing how many there are to move when given.
-fn sync_button(k: &Kit, glyph: &'static Icon, label: &str, commits: Option<u32>, shortcut: &str, disabled: bool, act: fn(&mut State)) -> El {
-    let Some(commits) = commits else {
-        return IconButton::new(glyph).variant(IconButtonVariant::Ghost).label(label).shortcut(shortcut).disabled(disabled).on_press(act).build(k);
+/// A button of the bar: an icon, with a count beside it when there is something to count.
+struct BarButton {
+    glyph: &'static Icon,
+    /// What it does or what it counts, as its tooltip says.
+    help: String,
+    count: Option<String>,
+    shortcut: Option<&'static str>,
+    muted: bool,
+    expanded: Option<bool>,
+    disabled: bool,
+}
+
+impl BarButton {
+    fn new(glyph: &'static Icon, help: String) -> BarButton {
+        BarButton { glyph, help, count: None, shortcut: None, muted: false, expanded: None, disabled: false }
+    }
+
+    fn count(self, count: Option<String>) -> BarButton {
+        BarButton { count, ..self }
+    }
+
+    fn shortcut(self, shortcut: &'static str) -> BarButton {
+        BarButton { shortcut: Some(shortcut), ..self }
+    }
+
+    fn muted(self, muted: bool) -> BarButton {
+        BarButton { muted, ..self }
+    }
+
+    fn expanded(self, expanded: bool) -> BarButton {
+        BarButton { expanded: Some(expanded), ..self }
+    }
+
+    fn disabled(self, disabled: bool) -> BarButton {
+        BarButton { disabled, ..self }
+    }
+
+    fn build(self, k: &Kit, press: impl Fn(&mut State, &mut Tx) + 'static) -> El {
+        let Some(count) = self.count else {
+            let variant = if self.muted { IconButtonVariant::GhostMuted } else { IconButtonVariant::Ghost };
+            let button = IconButton::new(self.glyph).variant(variant).label(self.help.clone()).help(self.help).disabled(self.disabled);
+            let button = match self.expanded {
+                Some(expanded) => button.expanded(expanded),
+                None => button,
+            };
+            let button = match self.shortcut {
+                Some(shortcut) => button.shortcut(shortcut),
+                None => button,
+            };
+            return button.on_press_tx(press).build(k);
+        };
+        let variant = if self.muted { ButtonVariant::GhostMuted } else { ButtonVariant::Ghost };
+        let button = Button::new(self.help.clone()).icon(self.glyph).variant(variant).help(self.help).disabled(self.disabled);
+        let button = match self.expanded {
+            Some(expanded) => button.expanded(expanded),
+            None => button,
+        };
+        let button = match self.shortcut {
+            Some(shortcut) => button.shortcut(shortcut),
+            None => button,
+        };
+        button.label_with(move |font, ink| text(count).font(font).color(ink)).on_press_tx(press).build(k)
+    }
+}
+
+/// The current branch's pull request, by its number, its icon saying where it stands. Only an
+/// open one asks for attention.
+fn head_pull_request(k: &Kit, found: &PullRequest) -> El {
+    let glyph = match found.status {
+        Status::Open => &PULL_REQUEST_ICON,
+        Status::Draft => &DRAFT_PULL_REQUEST_ICON,
+        Status::Merged => &MERGED_PULL_REQUEST_ICON,
+        Status::Closed => &CLOSED_PULL_REQUEST_ICON,
     };
-    let button = Button::new(format!("{label}, {commits} commits")).icon(glyph).variant(ButtonVariant::Ghost).help(label).shortcut(shortcut);
-    button.label_with(move |font, ink| text(commits.to_string()).font(font).color(ink)).disabled(disabled).on_press(act).build(k)
+    let help = format!("Pull request #{} ({}): {}", found.number, found.status.label(), found.title);
+    let button = BarButton::new(glyph, help).count(Some(format!("#{}", found.number))).muted(found.status != Status::Open);
+    button.build(k, |s, tx| s.open_head_pull_request(tx)).key("head-pull-request")
+}
+
+/// `count` of `noun`, which takes an s for more than one.
+fn plural(count: usize, noun: &str) -> String {
+    match count {
+        1 => format!("1 {noun}"),
+        n => format!("{n} {noun}s"),
+    }
 }
 
 /// A button in the bar naming what is on screen, cut to fit.
@@ -261,7 +378,24 @@ fn list_actions(s: &State, k: &Kit) -> Option<El> {
 
 fn branch_actions(s: &State, k: &Kit) -> El {
     let idle = s.running.is_none();
-    list_header(k, format!("On {}", s.overview.head)).child(small_button("Check out").disabled(!idle || s.branch_to_check_out().is_none()).on_press(State::check_out_selected).build(k))
+    list_header(k, format!("On {}", s.overview.head))
+        .child(small_button("Check out").disabled(!idle || s.branch_to_check_out().is_none()).on_press(State::check_out_selected).build(k))
+        .children(s.pull_request_offer().map(|offer| pull_request(k, offer)))
+}
+
+/// The selected branch's pull request, or a way to create one, opening in the browser.
+fn pull_request(k: &Kit, offer: PullRequestOffer) -> El {
+    let existing = match offer {
+        PullRequestOffer::Existing(existing) => existing,
+        PullRequestOffer::New { failure, .. } => {
+            let help = failure.map_or("Open the forge's form for one, in the browser".to_owned(), |failure| format!("Couldn't look for one: {failure}"));
+            return small_button("Create pull request").help(help).on_press_tx(State::open_pull_request).build(k);
+        }
+    };
+    let label = format!("#{} {}", existing.number, existing.title);
+    let button = small_button(&label).label_with(move |font, ink| one_line(label).font(font).color(ink)).help(format!("Open pull request #{} in the browser", existing.number));
+    let button = button.on_press_tx(State::open_pull_request).build(k).key("pull-request").max_w(PULL_REQUEST_MAX_WIDTH).min_w(0.0);
+    row().gap(4.0).items_center().min_w(0.0).child(button).child(Badge::new(existing.status.label()).build(k))
 }
 
 fn stash_actions(s: &State, k: &Kit) -> El {

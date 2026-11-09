@@ -1,6 +1,6 @@
 # 0001: Approach
 
-Status: step 4e done, waiting for Peter's UI review. See [Tasks](#tasks).
+Status: step 4f done, waiting for Peter's UI review. See [Tasks](#tasks).
 
 ## Intent
 
@@ -189,7 +189,7 @@ Bar:
 
 - **Reviews in the order of their reach**: Staging, Changes, Branches, Commits, Stashes. Staging is part of Changes, which is part of the branch. Commits splits the branch into pieces, and stashes sit off to the side. Staging is the default, on start and on switching repositories.
 - **Comments leaves the segmented control**, since it compares nothing. It becomes a button on the right with the open count. While the page is open no segment is selected; a segment, or the button again, goes back to a review. The control also gets much narrower, as every segment is as wide as the widest label, which was "Comments (n)".
-- **Icons on the right, with tooltips and shortcuts**: Commit, Pull and Push. Pull and Push keep their counts beside the icon, the only thing on them worth reading. Commit, the main action of the Staging workflow and so far only in the palette, gets a label too, so it reads as the main action. Our own SVG icons, as Rune has none for git.
+- **Icons on the right, with tooltips and shortcuts**: Commit, Pull and Push. Pull and Push keep their counts beside the icon, the only thing on them worth reading. Commit, the main action of the Staging workflow and so far only in the palette, gets a label too, so it reads as the main action. Our own SVG icons, as Rune has none for git. Reversed in step 4f: the right of the bar is icons and counts only.
 - **Refresh leaves the bar.** The watcher refreshes by itself, and the palette keeps Refresh. The watcher's error message must point there.
 
 Comments page:
@@ -214,7 +214,7 @@ Tasks:
 - [x] Comments page: every comment with its snippet, open, outdated, then resolved, resolved collapsed
 - [x] Copy one comment, and copy every open comment that isn't outdated
 
-### Step 4f: Pull requests
+### DONE - Step 4f: Pull requests
 
 Match a branch to its pull request, and open one, on GitHub and on Forgejo or Gitea. Reviewing a pull request in the app comes later.
 
@@ -225,10 +225,14 @@ Keep in mind:
 - **On GitHub, `gh` finds a branch's pull request**, with `--json` output and its own auth. That makes it a second spawned program, so it gets its own module, as git has.
 - **Forgejo and Gitea have no CLI with machine-readable output.** `fj` prints only for people and can't search by branch. Their HTTP API can (`/api/v1/repos/<owner>/<repo>/pulls`), but private repositories need a token. Decided: on Forgejo and Gitea the app only opens pull requests for now. Showing a branch's pull request there waits for an HTTP client and a token setting.
 
+Built: the pull request sits in the Branches review's header, beside Check out, for the selected branch: its number, title and status, or Create pull request. The repository is the one the bar names, `origin`'s first, as Push publishes there too. Branches go by their local names, and a base that is only on a remote loses its remote's prefix. A base of `HEAD` leaves the forge to pick its default branch. `gh` gets the repository explicitly (`--repo host/owner/repo`), so it never guesses or prompts, and the open pull request wins over newer closed ones; other repositories' branches of the same name don't count. The bar shows the current branch's pull request too, left of Commit: an icon and its number, the rest in the tooltip, and nothing when there is none, as the bar overflows (step 4g). The icon's shape says where the pull request stands, as GitHub's do: open, draft (its line dashed), merged, closed (its arrow crossed out). Shape rather than colour, since green and red mean added and removed lines here, and colour alone fails colour-blind readers. Only an open one is in full ink; a draft, merged or closed one is muted, as it asks for no attention.
+
+That made the right of the bar uniform: every button is an icon, with a count when there is something to count, and its tooltip says what the count is. Comments and Commit lost their labels, reversing step 4e's decision to label Commit so it reads as the main action: its count now does that job, showing up exactly when something is ready to commit. Commit counts staged files only, not what a commit with nothing staged would take: that count would drop as files get staged, which looks broken while staging. With nothing staged it shows no count but still commits everything, and its dialog says so first. The bar now fits a window 900 points wide. Answers are kept by branch, and `gh` runs only for a branch not asked about yet, not on the watcher's refreshes, since agents' edits would call the API all day. The window regaining focus, Refresh from the palette and Fetch ask again for the current and the selected branch, keeping the old answers on screen meanwhile. Until `gh` answers, nothing shows on GitHub. When it can't look, Create pull request shows, its tooltip saying why. Not handled: a branch whose name differs on its remote, an ssh host alias (`git@github-work:`), which reads as Forgejo, and GitHub Enterprise.
+
 Tasks:
 
-- [ ] Open a pull request for a branch, in the browser
-- [ ] Show a branch's pull request on GitHub, and open it in the browser
+- [x] Open a pull request for a branch, in the browser
+- [x] Show a branch's pull request on GitHub, and open it in the browser
 
 ### Step 4g: UI refinements
 
@@ -240,7 +244,7 @@ A first step is done: the panel and the diff are sheets on a darker page, and th
 
 Tasks:
 
-- [ ] Rework the top panel: a clear purpose in every review, and clear separation from the diff (the bar also overflows narrow windows, which hides Pull and Push)
+- [ ] Rework the top panel: a clear purpose in every review, and clear separation from the diff (the bar also overflows narrow windows, which hides Pull and Push; step 4f's icons and counts made it fit 900 points)
 - [ ] Stop new files wasting half of the split view (may need a Rune issue)
 - [ ] Decide what picking the default branch should show (it's empty today)
 

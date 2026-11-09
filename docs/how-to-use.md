@@ -58,7 +58,7 @@ A comment appears in any review that contains its lines, not only the one you wr
 
 ## See every comment
 
-**Comments**, on the right of the bar, shows how many comments are open. Press it for a page of every comment, from any review: open ones first, then outdated ones, then resolved ones. Press it again, or pick a review in the bar, to go back.
+**Comments**, the speech bubble on the right of the bar, shows how many comments are open. Press it for a page of every comment, from any review: open ones first, then outdated ones, then resolved ones. Press it again, or pick a review in the bar, to go back.
 
 Each comment sits under the code it was written on, with a few lines around it, as that code was when you wrote it. So an outdated comment still shows what it was about, and its line numbers can differ from where the comment is now, which its header says. The header also names the review it was written in and its status.
 
@@ -85,13 +85,21 @@ Each file in the diff has its buttons in its header:
 
 **Stage all** above the unstaged list and **Unstage all** above the staged list act on everything at once. The [command palette](#commands) has them too.
 
-To commit, press **Commit** at the right of the bar, **Ctrl+Enter** or **Ctrl+Shift+C** (or run **Git: Commit** from the [command palette](#commands)), write a message and press the dialog's **Commit**, or **Ctrl+Enter**. On its left, the dialog sums up what the commit takes: new, changed and deleted files. It also lists what stays uncommitted, marking files the commit takes only part of, which often means you forgot to stage something. With nothing staged, the commit takes everything, new files included. **Enter** starts a new line. Your commit hooks run as usual. Closing the dialog keeps the message, and so does a commit that fails.
+To commit, press **Commit** at the right of the bar, the dot on a line, which shows how many files are staged, **Ctrl+Enter** or **Ctrl+Shift+C** (or run **Git: Commit** from the [command palette](#commands)), write a message and press the dialog's **Commit**, or **Ctrl+Enter**. On its left, the dialog sums up what the commit takes: new, changed and deleted files. It also lists what stays uncommitted, marking files the commit takes only part of, which often means you forgot to stage something. With nothing staged, the commit takes everything, new files included. **Enter** starts a new line. Your commit hooks run as usual. Closing the dialog keeps the message, and so does a commit that fails.
 
 ## Branches and stashes
 
 - **Branches:** the branch you're on is picked when you open it. Select another and press **Check out** to switch to it. To switch or start a branch, see [Switch branches](#switch-branches). Whichever way you switch, even from a terminal, the review moves to the branch you're now on.
 - **Ctrl+Shift+S**, or **Git: Stash** in the [command palette](#commands), puts changes aside. Give the stash a name if you like, and pick what it takes: your changes and new files, your changes alone, or only what's staged.
 - **Stashes:** select one and press **Apply** to bring it back and keep it, **Pop** to bring it back and remove it, or **Drop** to delete it, which asks first. Double-clicking a stash applies it.
+
+## Pull requests
+
+In **Branches**, a branch on GitHub shows its pull request beside **Check out**: its number, title and whether it is open, a draft, merged or closed. Click it to open it in the browser. The app asks GitHub through `gh`, so install it and log in with `gh auth login`. Without one, or if `gh` can't look, **Create pull request** opens GitHub's form for a new one, comparing the branch with its parent, as the diff does; hover it to see why `gh` couldn't look. On Forgejo or Gitea, **Create pull request** always shows, as the app can't look there yet.
+
+The branch you're on shows its pull request in the bar too, left of **Commit**: its number, with the title and status in the tooltip. Its icon says where it stands: open, draft (a dashed line), merged (two lines joined) or closed (crossed out). Only an open one is bright. Click it to open it.
+
+The pull request goes to the repository named in the bar: the one `origin` points at. The [command palette](#commands) has the same, under **Git**. The app asks GitHub again when you come back to its window, so a pull request you just created or merged in the browser shows then. **Git: Refresh** in the palette and a fetch ask again too.
 
 ## Switch branches
 

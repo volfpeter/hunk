@@ -3,6 +3,8 @@
 mod action;
 mod app;
 mod comments;
+mod forge;
+mod gh;
 mod git;
 mod kept;
 mod open;
@@ -54,6 +56,6 @@ fn main() -> ExitCode {
         ..AppSpec::new(NAME, WINDOW_SIZE, || unreachable!("App::init builds the state"), view::view)
     };
     let shell = Shell::new(recents, Settings::load());
-    App::new(spec).init(move || State::new(opened, shell)).modifier_keys().run();
+    App::new(spec).init(move || State::new(opened, shell)).on_focus(State::on_focus).modifier_keys().run();
     ExitCode::SUCCESS
 }
