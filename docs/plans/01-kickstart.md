@@ -1,6 +1,6 @@
 # 0001: Approach
 
-Status: step 5's spike done, waiting for Peter to confirm the code view's base. Step 4h waits for Peter's UI review, and step 4g's `s` / `u` is still open. See [Tasks](#tasks).
+Status: step 6's spike done, waiting for Peter to confirm the code view's base. Step 4h waits for Peter's UI review, and step 4g's `s` / `u` is still open. See [Tasks](#tasks).
 
 ## Intent
 
@@ -174,7 +174,7 @@ Keep in mind:
 - **Fetch gets every remote and prunes**, so the switcher stops offering branches that were deleted on the remote. It fails on credentials the way pull does.
 - **The remotes dialog** lists each remote with its URL. It adds a remote from a name and a URL, with the name defaulting to `origin` when there is none. It removes a remote only after a confirm, because git drops that remote's branches with it. Push already sends a new branch to `origin`.
 
-Built: the branch name in the bar opens the switcher, and the Branches review lost its New branch button. A remote-only branch always checks out with `--track` and the full ref, so there is no guessing and no clash with a local branch named `<remote>/<branch>`. The switcher shows ten branches and how many more match, highlights the first match rather than the new branch, and offers no new branch for a name with spaces. The current branch is listed, and picking it only closes the switcher. Fetch and Remotes sit in the switcher's footer, since the bar already overflows (step 4j). Fetch is offered only with a remote. The Branches review selects the current branch when it opens, and moves to the branch switched to, from the app or a terminal. An empty name field means `origin` unless a remote has that name. Adding doesn't fetch. Not handled: a remote named with a leading `-` can be added, and then breaks fetching every remote.
+Built: the branch name in the bar opens the switcher, and the Branches review lost its New branch button. A remote-only branch always checks out with `--track` and the full ref, so there is no guessing and no clash with a local branch named `<remote>/<branch>`. The switcher shows ten branches and how many more match, highlights the first match rather than the new branch, and offers no new branch for a name with spaces. The current branch is listed, and picking it only closes the switcher. Fetch and Remotes sit in the switcher's footer, since the bar already overflows (step 5). Fetch is offered only with a remote. The Branches review selects the current branch when it opens, and moves to the branch switched to, from the app or a terminal. An empty name field means `origin` unless a remote has that name. Adding doesn't fetch. Not handled: a remote named with a leading `-` can be added, and then breaks fetching every remote.
 
 Tasks:
 
@@ -205,7 +205,7 @@ Comments page:
 
 Unified or Split becomes one setting for every diff, kept across restarts. That is app state beside the recent repositories: update the invariant when it lands.
 
-Built: Comments is a page, not a review: the kind under it stays, so the button goes back to it. Copy all left the bar, for the page's header and the palette, as the bar overflows (step 4j) and the page shows what gets copied. Each entry's header holds its lines now, the review it was written in, its status, Copy and Show in diff, so the card under it drops its location and badge and keeps its actions beside its text. Show in diff is offered only while the review is on offer: a commit beyond the list, a dropped stash or a deleted branch has none. A snippet is three rows above and below the lines, a removed line counting as one, within one hunk unless the diff holds the whole text. A whole-file comment keeps the first seven lines of its first hunk, and its card goes under the last. A comment with neither a snippet nor lines, a whole-file one from before this, gets no entry and shows above the entries. Rune opens a snippet that doesn't start at line 1 with a gap row counting the lines before it (see `docs/rune-quirks.md`). The page rebuilds only when a comment comes, goes or changes status, and an entry keeps what the reader opened or closed while it stays resolved or open.
+Built: Comments is a page, not a review: the kind under it stays, so the button goes back to it. Copy all left the bar, for the page's header and the palette, as the bar overflows (step 5) and the page shows what gets copied. Each entry's header holds its lines now, the review it was written in, its status, Copy and Show in diff, so the card under it drops its location and badge and keeps its actions beside its text. Show in diff is offered only while the review is on offer: a commit beyond the list, a dropped stash or a deleted branch has none. A snippet is three rows above and below the lines, a removed line counting as one, within one hunk unless the diff holds the whole text. A whole-file comment keeps the first seven lines of its first hunk, and its card goes under the last. A comment with neither a snippet nor lines, a whole-file one from before this, gets no entry and shows above the entries. Rune opens a snippet that doesn't start at line 1 with a gap row counting the lines before it (see `docs/rune-quirks.md`). The page rebuilds only when a comment comes, goes or changes status, and an entry keeps what the reader opened or closed while it stays resolved or open.
 
 Tasks:
 
@@ -227,7 +227,7 @@ Keep in mind:
 - **On GitHub, `gh` finds a branch's pull request**, with `--json` output and its own auth. That makes it a second spawned program, so it gets its own module, as git has.
 - **Forgejo and Gitea have no CLI with machine-readable output.** `fj` prints only for people and can't search by branch. Their HTTP API can (`/api/v1/repos/<owner>/<repo>/pulls`), but private repositories need a token. Decided: on Forgejo and Gitea the app only opens pull requests for now. Showing a branch's pull request there waits for an HTTP client and a token setting.
 
-Built: the pull request sits in the Branches review's header, beside Check out, for the selected branch: its number, title and status, or Create pull request. The repository is the one the bar names, `origin`'s first, as Push publishes there too. Branches go by their local names, and a base that is only on a remote loses its remote's prefix. A base of `HEAD` leaves the forge to pick its default branch. `gh` gets the repository explicitly (`--repo host/owner/repo`), so it never guesses or prompts, and the open pull request wins over newer closed ones; other repositories' branches of the same name don't count. The bar shows the current branch's pull request too, left of Commit: an icon and its number, the rest in the tooltip, and nothing when there is none, as the bar overflows (step 4j). The icon's shape says where the pull request stands, as GitHub's do: open, draft (its line dashed), merged, closed (its arrow crossed out). Shape rather than colour, since green and red mean added and removed lines here, and colour alone fails colour-blind readers. Only an open one is in full ink; a draft, merged or closed one is muted, as it asks for no attention.
+Built: the pull request sits in the Branches review's header, beside Check out, for the selected branch: its number, title and status, or Create pull request. The repository is the one the bar names, `origin`'s first, as Push publishes there too. Branches go by their local names, and a base that is only on a remote loses its remote's prefix. A base of `HEAD` leaves the forge to pick its default branch. `gh` gets the repository explicitly (`--repo host/owner/repo`), so it never guesses or prompts, and the open pull request wins over newer closed ones; other repositories' branches of the same name don't count. The bar shows the current branch's pull request too, left of Commit: an icon and its number, the rest in the tooltip, and nothing when there is none, as the bar overflows (step 5). The icon's shape says where the pull request stands, as GitHub's do: open, draft (its line dashed), merged, closed (its arrow crossed out). Shape rather than colour, since green and red mean added and removed lines here, and colour alone fails colour-blind readers. Only an open one is in full ink; a draft, merged or closed one is muted, as it asks for no attention.
 
 That made the right of the bar uniform: every button is an icon, with a count when there is something to count, and its tooltip says what the count is. Comments and Commit lost their labels, reversing step 4e's decision to label Commit so it reads as the main action: its count now does that job, showing up exactly when something is ready to commit. Commit counts staged files only, not what a commit with nothing staged would take: that count would drop as files get staged, which looks broken while staging. With nothing staged it shows no count but still commits everything, and its dialog says so first. The bar now fits a window 900 points wide. Answers are kept by branch, and `gh` runs only for a branch not asked about yet, not on the watcher's refreshes, since agents' edits would call the API all day. The window regaining focus, Refresh from the palette and Fetch ask again for the current and the selected branch, keeping the old answers on screen meanwhile. Until `gh` answers, nothing shows on GitHub. When it can't look, Create pull request shows, its tooltip saying why. Not handled: a branch whose name differs on its remote, an ssh host alias (`git@github-work:`), which reads as Forgejo, and GitHub Enterprise.
 
@@ -269,7 +269,7 @@ Tasks:
 Lists every key, grouped as the palette groups its commands, so keys can be found without remembering them.
 
 - **Ctrl+H opens it**, a picker-kind key by the rules above. The icon sits at the far right of the bar, with a tooltip showing the key.
-- **Same topics, same order as the palette**, with Ctrl+K (open the palette) as the first line above them. Built from the palette's commands, so a command that gains a key, or a new command from step 4i, shows up without touching the overlay. Commands without a key are left out.
+- **Same topics, same order as the palette**, with Ctrl+K (open the palette) as the first line above them. Built from the palette's commands, so a command that gains a key, or a new command from step 4j, shows up without touching the overlay. Commands without a key are left out.
 - It lists keys, it doesn't run anything. Keys Rune provides itself (text fields, lists and the like) are left out. Our own bare keys that the palette doesn't hold, like `s` / `u`, need a place in the same list.
 
 Built: the palette's commands carry whether they can run now, rather than leaving out those that can't, so the overlay lists every key, Push's included when there is nothing to push, while the palette and the keys still offer only what can run. The overlay is a dialog, so git keys do nothing under it, and Ctrl+H closes it again, or swaps the palette for it. A command can carry a second key, shown after its own, which only Switch branch has. The overlay is "Keyboard shortcuts", in two columns split between topics so the taller is shortest, as a window 600 points tall must hold it all: `Dialog` doesn't scroll content taller than the window.
@@ -280,7 +280,22 @@ Tasks:
 
 - [x] Overlay listing every key, on Ctrl+H and from a question-mark icon at the right of the bar
 
-### Step 4i: More git operations
+### Step 4i: Install from a local clone
+
+Run the app from the launcher instead of `cargo run`. Linux and macOS only.
+
+Decided:
+
+- **The installer is a script in the repository, run from a clone.** It builds the clone in place (`cargo build --release`) and points the launcher entry at that binary, so the running app is the clone's code and updating is `git pull` plus a rebuild. No `cargo install`, which copies the binary out. A `curl | sh` that clones for you, and prebuilt release binaries, wait until there is something to release; the script is the part they would reuse.
+- **A desktop entry, no `hunk` command on `PATH`.** Linux: a `.desktop` file in `~/.local/share/applications` and the icon in the user's icon folder. macOS: a minimal `.app` in `~/Applications`, built locally so Gatekeeper has nothing to object to. The script branches on `uname`. The macOS half can't be tested on Linux: Peter tries it.
+- **The launcher must not keep a process attached.** A desktop entry detaches by nature, so nothing extra is needed. Detaching a terminal `hunk`, as `zed` does, is not part of this step.
+- **The icon**: a pull request drawn as a lower-case `h`, upright, in mid green on a rounded tile. The stem has a node at each end, the arch ends in a node at the bottom right, and the arch's tip is arrow-like, pointing up and to the right, like a lambda flipped vertically. Mid green, as dark green vanishes on dark launchers, and green is an open pull request's colour. Drawn as an SVG, with the PNGs and the macOS `.icns` rendered from it. It should read at 16 to 32 points. It doesn't depend on the working name: it stays a pull request if the app is renamed.
+
+Tasks:
+
+- [ ] Install script: build the clone, add the launcher entry and icon on Linux and macOS, with the icon as an SVG; add a short install section to `docs/how-to-use.md`
+
+### Step 4j: More git operations
 
 Common operations still missing, found by asking what a reviewer does after the review: fold in another branch, undo a commit, throw work away. Same rules as step 3: file-level, visible controls where they have a place, the palette as shortcut, confirm anything destructive, and show git's error. Keys follow step 4g's rules, and the overlay picks them up from the palette.
 
@@ -301,7 +316,7 @@ Tasks:
 - [ ] Undo the last commit, leaving its changes staged
 - [ ] Decide which of the candidates are worth building
 
-### Step 4j: UI refinements
+### Step 5: UI refinements
 
 Peter dislikes the always-visible top panel. A left sidebar is doubtful too, because side-by-side diffs need the width, so moving the panel to the side is unlikely to be the fix. lazygit's layout is not a reference.
 
@@ -315,7 +330,7 @@ Tasks:
 - [ ] Stop new files wasting half of the split view (may need a Rune issue)
 - [ ] Decide what picking the default branch should show (it's empty today)
 
-### Step 5: Code overlay
+### Step 6: Code overlay
 
 Something in the diff raises a question: where does this come from, where else is it used, how does the rest of the code do it. Answering means reading code outside the diff, then getting back to the review. Exploring is the goal. Small edits would be a bonus, later.
 
@@ -346,7 +361,7 @@ Order open, plan each when it comes up: reviewing pull requests on GitHub and Fo
 
 ### Later: Code overlay
 
-Each builds on step 5.
+Each builds on step 6.
 
 - **Search the working tree**, with results as file:line rows that open in the overlay. `git grep --untracked` searches what the overlay shows. With `.ignore` overrides it no longer would, so search moves to ripgrep's `grep` crate then.
 - **`.ignore` overrides**: an ignored file or folder shows again when a `.ignore` file un-ignores it (`!dist/`), as ripgrep reads them. Peter often wants some ignored files, such as generated code or `.env`. Git doesn't know `.ignore`, so the tree, the picker and search walk the folders with ripgrep's `ignore` crate, which reads `.gitignore` and `.ignore` together. That crate is the reason for the dependency.
