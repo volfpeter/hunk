@@ -280,7 +280,7 @@ Tasks:
 
 - [x] Overlay listing every key, on Ctrl+H and from a question-mark icon at the right of the bar
 
-### Step 4i: Install from a local clone
+### DONE - Step 4i: Install from a local clone
 
 Run the app from the launcher instead of `cargo run`. Linux and macOS only.
 
