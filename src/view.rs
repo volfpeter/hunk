@@ -14,6 +14,8 @@ use crate::overview::{CommitPlan, Entry, LineCounts, Operation};
 use crate::review::Review;
 use crate::switcher::BranchChoice;
 
+/// How many times faster than Rune's defaults every animation runs.
+const ANIMATION_SPEED: f32 = 4.0;
 const BAR_HEIGHT: f32 = 48.0;
 /// The page showing between the sheets, and around them.
 const SHEET_GAP: f32 = 8.0;
@@ -146,6 +148,7 @@ fn one_line(line: String) -> El {
 }
 
 pub fn view(s: &State, cx: &mut Cx<State>) -> El {
+    cx.time_scale(ANIMATION_SPEED);
     let k = Kit::neutral(cx.system_dark());
     let mut overlays = Vec::new();
     // Under the confirm for removing a remote.

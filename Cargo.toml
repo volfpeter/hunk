@@ -7,8 +7,8 @@ license = "MIT"
 [dependencies]
 dirs = "7.0.0"
 notify = "8.2.1"
-rune = { git = "https://github.com/anomalyco/rune", rev = "e970367bd7d2a51e2e7d58e2978ea32eac7780cb" }
-rune-kit = { git = "https://github.com/anomalyco/rune", rev = "e970367bd7d2a51e2e7d58e2978ea32eac7780cb" }
+rune = { git = "https://github.com/anomalyco/rune", rev = "647cbbe243395a3bc30e96eaec924c29c418a3ea" }
+rune-kit = { git = "https://github.com/anomalyco/rune", rev = "647cbbe243395a3bc30e96eaec924c29c418a3ea" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 
