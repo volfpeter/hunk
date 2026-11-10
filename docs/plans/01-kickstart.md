@@ -286,14 +286,19 @@ Run the app from the launcher instead of `cargo run`. Linux and macOS only.
 
 Decided:
 
-- **The installer is a script in the repository, run from a clone.** It builds the clone in place (`cargo build --release`) and points the launcher entry at that binary, so the running app is the clone's code and updating is `git pull` plus a rebuild. No `cargo install`, which copies the binary out. A `curl | sh` that clones for you, and prebuilt release binaries, wait until there is something to release; the script is the part they would reuse.
-- **A desktop entry, no `hunk` command on `PATH`.** Linux: a `.desktop` file in `~/.local/share/applications` and the icon in the user's icon folder. macOS: a minimal `.app` in `~/Applications`, built locally so Gatekeeper has nothing to object to. The script branches on `uname`. The macOS half can't be tested on Linux: Peter tries it.
+- **The installer is a script in the repository, run from a clone.** It builds the clone (`cargo build --release`) and copies the binary out to a stable place, so `cargo clean`, `CARGO_TARGET_DIR` or a half-done rebase in the clone can't break the installed app. Updating is `git pull` and running the script again. A `curl | sh` that clones for you, and prebuilt release binaries, wait until there is something to release; the script is the part they would reuse.
+- **A desktop entry and a `hunk` command on `PATH`**, as step 4c's start is built around `hunk .`. Linux: a `.desktop` file in `~/.local/share/applications`, the SVG icon in `hicolor/scalable/apps` of the user's icon folder, and a link in `~/.local/bin`. macOS: a minimal `.app` in `~/Applications`, built locally so Gatekeeper has nothing to object to. The script branches on `uname`.
+- **The app id is `io.github.volfpeter.hunk`**, reverse-DNS from the repository's home (`io.github`, as `com.github` would claim github.com). The window reports it (`rune::set_app_id`), and the desktop entry and icon are named after it, so Wayland compositors match the window to its entry and icon. Wayland only: no X11 `StartupWMClass`.
+- **The script uninstalls too**, removing everything it installed.
 - **The launcher must not keep a process attached.** A desktop entry detaches by nature, so nothing extra is needed. Detaching a terminal `hunk`, as `zed` does, is not part of this step.
-- **The icon**: a pull request drawn as a lower-case `h`, upright, in mid green on a rounded tile. The stem has a node at each end, the arch ends in a node at the bottom right, and the arch's tip is arrow-like, pointing up and to the right, like a lambda flipped vertically. Mid green, as dark green vanishes on dark launchers, and green is an open pull request's colour. Drawn as an SVG, with the PNGs and the macOS `.icns` rendered from it. It should read at 16 to 32 points. It doesn't depend on the working name: it stays a pull request if the app is renamed.
+- **The icon**: a pull-request glyph (two nodes, a curve, an arrow), in mid green on a rounded tile. Mid green, as dark green vanishes on dark launchers, and green is an open pull request's colour. It should read at 16 to 32 points, so it stays plain. Drawn as an SVG. The macOS `.icns` is rendered from it once and committed, so the script needs only `cargo`.
+- **macOS is left to a macOS user**, who can't be Peter. Build the `.app` as best we can, untested. A known trap for them: an app started from Finder or Spotlight gets launchd's bare `PATH`, without `/opt/homebrew/bin`, so a Homebrew `gh` isn't found and pull requests quietly show as "can't look" (`git` survives as `/usr/bin/git`). Zed reads the login shell's environment at start; a launcher in the `.app` running the binary through the login shell is the cheap fix. Rendering the `.icns` is theirs too.
 
 Tasks:
 
-- [ ] Install script: build the clone, add the launcher entry and icon on Linux and macOS, with the icon as an SVG; add a short install section to `docs/how-to-use.md`
+- [ ] Install and uninstall script: build the clone, copy the binary out, add the launcher entry, icon and `hunk` command on Linux, and the `.app` on macOS (untested); report the app id from the window; add a short install section to `docs/how-to-use.md`
+- [ ] Icon: the pull-request glyph as an SVG
+- [ ] macOS, for a macOS user: try the `.app`, fix `PATH` for `gh`, render and commit the `.icns`
 
 ### Step 4j: More git operations
 
