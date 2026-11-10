@@ -12,6 +12,8 @@ Paths, branch names, commit subjects, comments and errors can all be long, and a
 - Cut paths from the start, so the file name survives.
 - `Dialog` descriptions never wrap. Variable text goes in the body.
 - `TreeItem` truncates its label, not its `.trailing`.
+- `rich()` wraps, and `.single_line()` does nothing outside a text field. For coloured text on one line, use `text(..).spans(..)`.
+- Syntax highlighting colours only a source's first 128 KiB and 32,768 ranges. Highlight long text in chunks of lines.
 
 Check with a long string without spaces, in a narrow window.
 
@@ -21,6 +23,8 @@ Check with a long string without spaces, in a narrow window.
 - `TextEdit::focused` is ours to manage: the field taking focus must clear the other's.
 - Ctrl reads as Cmd off macOS, so Ctrl+Backspace takes the whole line unless remapped.
 - A multi-line field without `on_submit` drops plain Enter, looking for a default button. Only Shift+Enter makes a newline, so a field where Enter should do that has to remap it.
+- `text_input` has no read-only mode. Putting the text back in `on_input_change` keeps it read-only, with the caret and selection still working.
+- A field lays out all of its text on the UI thread whenever it changes, and highlight spans double that. Fine for a message, a hitch for a whole source file: long text goes in virtual rows.
 
 ## Dialogs
 
@@ -28,6 +32,11 @@ Check with a long string without spaces, in a narrow window.
 - Short dialogs need `.fit()`, or they stay at the standard height.
 - A fitted dialog taller than the window runs off both ends, title and close button included. Keep it short, or scroll its body.
 - `Dialog` always centres its panel. To place it elsewhere, re-align the layer it pushes last, as the palette does.
+- `Dialog` is either 368 points tall or as tall as its content. A panel filling the window is a layer of our own, with `El::modal` as `Dialog` uses.
+
+## Scrolling
+
+- A scroll viewport that unmounts forgets its offset. `on_scroll_offset` reports it but can't change state, so keep it in a `Cell` and put it back with `Tx::scroll_to_instant` when the viewport returns.
 
 ## The diff
 
@@ -50,7 +59,8 @@ Check with a long string without spaces, in a narrow window.
 ## Headless scripts
 
 - A `key` matches the end of an element's path, and `--tree` shows paths. Elements without a key go by position: `#0`, `#1`.
-- Key names are capitalised: `Enter`, `Escape`.
+- Key names are capitalised: `Enter`, `Escape`. Arrows are `Up`, `Down`, `Left` and `Right`.
+- Ctrl+letter is `"cmd": true`, as Ctrl reads as Cmd off macOS. With `"ctrl": true`, `is_command` doesn't match.
 - The diff's "+" only takes a press once its row is hovered, so `move` there in an earlier step.
 - `scroll` needs an `x` and `y` over the view, and a negative `dy` scrolls down.
 - The script's clock runs about twice as fast as real time, which matters when changing files from outside during a run.

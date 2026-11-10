@@ -1,6 +1,6 @@
 # 0001: Approach
 
-Status: step 4h done, waiting for Peter's UI review. Step 4g's `s` / `u` is still open. See [Tasks](#tasks).
+Status: step 5's spike done, waiting for Peter to confirm the code view's base. Step 4h waits for Peter's UI review, and step 4g's `s` / `u` is still open. See [Tasks](#tasks).
 
 ## Intent
 
@@ -321,19 +321,19 @@ Something in the diff raises a question: where does this come from, where else i
 
 Keep in mind:
 
-- **An overlay, not a view.** Nearly full screen, opened when needed. The bar holds comparisons, and this compares nothing (the Comments page lesson). The diff under it doesn't move, so closing the overlay is the way back. The overlay keeps its state between openings: the file, the scroll, the open folders.
+- **An overlay, not a view.** Nearly full screen, opened when needed. The bar holds comparisons, and this compares nothing (the Comments page lesson). The diff under it doesn't move, so closing the overlay is the way back. The overlay keeps its state between openings: the file, the scroll, the open folders. Closing unmounts its scroll viewport, which forgets its offset, so the overlay keeps the offset itself and puts it back on opening (see `docs/rune-quirks.md`). `Dialog` has only a fixed height or its content's, so the overlay is a layer of our own, modal as `Dialog`'s, which brings Escape.
 - **The working tree only**, whatever the review compares. It never passes for a branch's, a commit's or a stash's version.
 - **Ctrl+P is the main way around**: it opens the overlay with a fuzzy file picker on top, and Escape leaves the overlay showing the last file. One key opens both, and it is a picker key by step 4g's rules. Step 4g had reserved Ctrl+P for picking a file in the diff, but the file list already does that.
 - **Opening from the diff** opens the diff's top file, at the selected lines if any. Lines match only where the diff's right side is the working tree (Changes, Staging). Elsewhere it opens at the top, rather than at a line that may hold other code.
 - **Ignored files stay out**, of the tree and the picker alike. Ignored means what git says, `.git/info/exclude` and the global excludes file included. Bringing some back through `.ignore` overrides waits for later.
-- **The code view is ours**, since Rune has none. `TextArea` is the likely base: caret, selection and copy come with it, and editing later becomes binding it. The alternative is a virtual list of lines, as `DiffView` uses.
-- **Highlighting**: Rune colours only a source's first 32 KiB. `DiffView` gets around this by highlighting in chunks of lines, and the code view can do the same. The built-in languages are a short list. `tree-sitter-highlight` would add languages, and get strings and comments right across chunk borders, at the cost of building C grammars. Worth it only once missing languages hurt, and then for the diff too (`DiffView::set_highlighter`).
+- **The code view is ours**, since Rune has none: a virtual row per line, as `DiffView` builds them, each line selectable text in one selection group, its number stuck to the left as it scrolls sideways. Proposed by the spike, Peter to confirm, since it gives up the caret. The spike (`research/code-view`) tried it against one `text_input` holding the whole file, which gives a caret, keyboard selection and an editor later, and stays read-only by putting the text back after an edit. But the field lays out the whole file on the UI thread at every open and every reload, a quarter of a second for 5,000 lines and growing with the file, and agents' edits reload it all day. Rows open in the same time whatever the file's length, and scroll at full speed. They select with the mouse across lines and copy, but have no caret, so no keyboard selection, and select all reaches only the rows built. Editing, when it comes, means an editor of our own, or a field over just the lines being edited.
+- **Highlighting**: Rune colours only a source's first 128 KiB and 32,768 ranges. Highlighting 128 lines at a time, as `DiffView` does, colours a whole file, in about 10 ms for 6,700 lines. A string or comment crossing a chunk's border is coloured wrong after it. The built-in languages are about 80, the common ones. `tree-sitter-highlight` would add languages, and get strings and comments right across chunk borders, at the cost of building C grammars. Worth it only once missing languages hurt, and then for the diff too (`DiffView::set_highlighter`).
 - **Agents edit while Peter reads**: the open file reloads when it changes on disk, and the view holds its place.
 - **Back and forward** over the places visited is something to try. Peter can't tell whether he wants it until he uses it.
 
 Tasks:
 
-- [ ] Spike the code view in `research/`, recording the answers here and traps in `docs/rune-quirks.md`: read-only with a caret and selection, no wrapping with sideways scrolling, line numbers, highlighting past 32 KiB, a 5,000-line file at full speed, and a nearly full-screen overlay (`Dialog` doesn't scroll content taller than the window)
+- [x] Spike the code view in `research/`, recording the answers here and traps in `docs/rune-quirks.md`: read-only with a caret and selection, no wrapping with sideways scrolling, line numbers, highlighting past 32 KiB, a 5,000-line file at full speed, and a nearly full-screen overlay (`Dialog` doesn't scroll content taller than the window)
 - [ ] Open the diff's file in the overlay with highlighting, at the selected lines in Changes and Staging, and close it back to the review untouched
 - [ ] Pick any working-tree file with Ctrl+P
 - [ ] Folder tree beside the code
