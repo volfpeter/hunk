@@ -1,5 +1,17 @@
 # How to use hunk
 
+## Install
+
+From a clone of the repository, on Linux or macOS, with [Rust](https://rustup.rs) and Git installed:
+
+```bash
+./install.sh
+```
+
+It builds the app and installs the `hunk` command in `~/.local/bin`, which must be on your `PATH`, and an entry in your app launcher. On macOS the entry is `hunk.app` in `~/Applications`. The app started from the launcher opens the last repository you had open.
+
+To update, `git pull` and run `./install.sh` again. `./install.sh --uninstall` removes everything it installed. Your comments stay in each repository, under `.git/hunk/`.
+
 ## Open a repository
 
 `hunk ~/dev/project` opens the repository that folder is in, and `hunk .` the one you're in. `hunk` alone opens the last repository you had open. Without one it shows an empty window, with **Open a repository**.

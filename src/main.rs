@@ -28,6 +28,7 @@ use recent::Recents;
 use settings::Settings;
 
 const NAME: &str = "hunk";
+const APP_ID: &str = "io.github.volfpeter.hunk";
 const WINDOW_SIZE: (f32, f32) = (1500.0, 950.0);
 
 /// Starts on the folder passed, else the last repository if it is still one, else nothing. The
@@ -55,6 +56,7 @@ fn main() -> ExitCode {
         families: ("Inter", "ui-monospace, Inter"),
         ..AppSpec::new(NAME, WINDOW_SIZE, || unreachable!("App::init builds the state"), view::view)
     };
+    rune::set_app_id(APP_ID);
     let shell = Shell::new(recents, Settings::load());
     App::new(spec).init(move || State::new(opened, shell)).on_focus(State::on_focus).modifier_keys().run();
     ExitCode::SUCCESS

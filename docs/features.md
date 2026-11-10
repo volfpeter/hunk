@@ -2,6 +2,12 @@
 
 Everything the app does, to try at your own pace. A tick means Peter tried it and it works: agents add features unticked and never tick them. How to use each one is in [how-to-use.md](how-to-use.md).
 
+## Install
+
+- [ ] `./install.sh` builds the clone and installs the `hunk` command and a launcher entry with its icon
+- [ ] The app's window shows the launcher's icon
+- [ ] `./install.sh --uninstall` removes them
+
 ## Repositories
 
 - [ ] `hunk <folder>` opens the repository the folder is in

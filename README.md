@@ -11,8 +11,10 @@ You need [Rust](https://rustup.rs), Git and a GPU with Vulkan support.
 ```bash
 git clone <this repository>
 cd hunk
-cargo install --path .
+./install.sh
 ```
+
+It builds the app and adds `hunk` to `~/.local/bin` and to your app launcher. See [Install](docs/how-to-use.md#install) for updating and removing it.
 
 Then open a repository with it:
 

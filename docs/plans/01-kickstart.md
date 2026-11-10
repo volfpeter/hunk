@@ -1,6 +1,6 @@
 # 0001: Approach
 
-Status: step 6's spike done, waiting for Peter to confirm the code view's base. Step 4h waits for Peter's UI review, and step 4g's `s` / `u` is still open. See [Tasks](#tasks).
+Status: step 6's spike done, waiting for Peter to confirm the code view's base. Step 4h waits for Peter's UI review, step 4i for him to try the install on Linux and a macOS user's turn, and step 4g's `s` / `u` is still open. See [Tasks](#tasks).
 
 ## Intent
 
@@ -287,17 +287,19 @@ Run the app from the launcher instead of `cargo run`. Linux and macOS only.
 Decided:
 
 - **The installer is a script in the repository, run from a clone.** It builds the clone (`cargo build --release`) and copies the binary out to a stable place, so `cargo clean`, `CARGO_TARGET_DIR` or a half-done rebase in the clone can't break the installed app. Updating is `git pull` and running the script again. A `curl | sh` that clones for you, and prebuilt release binaries, wait until there is something to release; the script is the part they would reuse.
-- **A desktop entry and a `hunk` command on `PATH`**, as step 4c's start is built around `hunk .`. Linux: a `.desktop` file in `~/.local/share/applications`, the SVG icon in `hicolor/scalable/apps` of the user's icon folder, and a link in `~/.local/bin`. macOS: a minimal `.app` in `~/Applications`, built locally so Gatekeeper has nothing to object to. The script branches on `uname`.
+- **A desktop entry and a `hunk` command on `PATH`**, as step 4c's start is built around `hunk .`. Linux: a `.desktop` file in `~/.local/share/applications`, the SVG icon in `hicolor/scalable/apps` of the user's icon folder, and the binary itself in `~/.local/bin`. macOS: a minimal `.app` in `~/Applications`, built locally so Gatekeeper has nothing to object to. The script branches on `uname`.
 - **The app id is `io.github.volfpeter.hunk`**, reverse-DNS from the repository's home (`io.github`, as `com.github` would claim github.com). The window reports it (`rune::set_app_id`), and the desktop entry and icon are named after it, so Wayland compositors match the window to its entry and icon. Wayland only: no X11 `StartupWMClass`.
 - **The script uninstalls too**, removing everything it installed.
 - **The launcher must not keep a process attached.** A desktop entry detaches by nature, so nothing extra is needed. Detaching a terminal `hunk`, as `zed` does, is not part of this step.
 - **The icon**: a pull-request glyph (two nodes, a curve, an arrow), in mid green on a rounded tile. Mid green, as dark green vanishes on dark launchers, and green is an open pull request's colour. It should read at 16 to 32 points, so it stays plain. Drawn as an SVG. The macOS `.icns` is rendered from it once and committed, so the script needs only `cargo`.
 - **macOS is left to a macOS user**, who can't be Peter. Build the `.app` as best we can, untested. A known trap for them: an app started from Finder or Spotlight gets launchd's bare `PATH`, without `/opt/homebrew/bin`, so a Homebrew `gh` isn't found and pull requests quietly show as "can't look" (`git` survives as `/usr/bin/git`). Zed reads the login shell's environment at start; a launcher in the `.app` running the binary through the login shell is the cheap fix. Rendering the `.icns` is theirs too.
 
+Built: `install.sh` at the root, with `--uninstall`. It honours `XDG_DATA_HOME` and finds the binary through `cargo metadata`, so `CARGO_TARGET_DIR` works. Files are replaced by renaming, so a running `hunk` doesn't block an update. On macOS, `hunk` in `~/.local/bin` links into the bundle, the bundle is signed ad hoc, and the `.icns` is used once `assets/icon.icns` exists. The app id is written in `src/main.rs` and the script, both. Nothing runs `update-desktop-database`: the entry declares no file types, and it would leave a cache behind.
+
 Tasks:
 
-- [ ] Install and uninstall script: build the clone, copy the binary out, add the launcher entry, icon and `hunk` command on Linux, and the `.app` on macOS (untested); report the app id from the window; add a short install section to `docs/how-to-use.md`
-- [ ] Icon: the pull-request glyph as an SVG
+- [x] Install and uninstall script: build the clone, copy the binary out, add the launcher entry, icon and `hunk` command on Linux, and the `.app` on macOS (untested); report the app id from the window; add a short install section to `docs/how-to-use.md`
+- [x] Icon: the pull-request glyph as an SVG
 - [ ] macOS, for a macOS user: try the `.app`, fix `PATH` for `gh`, render and commit the `.icns`
 
 ### Step 4j: More git operations
