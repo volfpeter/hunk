@@ -1,6 +1,6 @@
 # 0001: Approach
 
-Status: step 6's spike done, waiting for Peter to confirm the code view's base. Step 4h waits for Peter's UI review, step 4i for him to try the install on Linux and a macOS user's turn, and step 4g's `s` / `u` is still open. See [Tasks](#tasks).
+Status: step 6's spike done, waiting for Peter to confirm the code view's base. Steps 4h and 4j wait for Peter's UI review, step 4i for him to try the install on Linux and a macOS user's turn, and step 4g's `s` / `u` is still open. See [Tasks](#tasks).
 
 ## Intent
 
@@ -302,7 +302,7 @@ Tasks:
 - [x] Icon: the pull-request glyph as an SVG
 - [ ] macOS, for a macOS user: try the `.app`, fix `PATH` for `gh`, render and commit the `.icns`
 
-### Step 4j: More git operations
+### DONE - Step 4j: More git operations
 
 Common operations still missing, found by asking what a reviewer does after the review: fold in another branch, undo a commit, throw work away. Same rules as step 3: file-level, visible controls where they have a place, the palette as shortcut, confirm anything destructive, and show git's error. Keys follow step 4g's rules, and the overlay picks them up from the palette.
 
@@ -314,14 +314,20 @@ Keep in mind:
 - **Undo the last commit, keeping its changes staged** (`reset --soft HEAD~1`). Offered only when the commit has no merge parent and, if it was pushed, with a warning. The commit message should come back into the next commit dialog, as it is half the work.
 - Candidates, to be cut or confirmed with Peter before building: amend the last commit, cherry-pick or revert a commit (from the Commits review's context menu), delete a branch (local, and the remote's), rename a branch, reset a branch to a commit, set an upstream. Skip the ones that don't hurt yet.
 
+Decided with Peter: no right-click menu, as Rune's `Tree` can't tell which row was clicked, and no header buttons, which wouldn't say what happens. **One dialog, Merge or rebase, on Ctrl+Shift+M** and in the palette, holding the extra complexity: it lists the other branches (local, then only on a remote) to filter and pick, and a choice whose labels say which branch goes where. Picking a row only highlights it, so the dialog is the confirm; rebasing a branch with an upstream warns there that sending it takes Force push. While a merge or rebase is in progress, the same key opens the same dialog on it, with **Abort and Continue**: without Continue a stopped rebase couldn't be finished in the app. Of the candidates, **delete a branch** (local only) and **force push** are built; force push wasn't on the list, but rebasing or undoing a pushed commit needs it, and Pull would merge the old commits back in. Amend (Undo commit and Commit do it, message included), cherry-pick, revert, rename, reset to a commit and set upstream (Push sets it) are cut.
+
+Built: the merge or rebase in progress comes from the git dir (`MERGE_HEAD`, `rebase-merge/`), so a refresh shows it rather than hiding it. Rebases of the older apply backend (`rebase-apply/`) aren't recognised. The bar shows it in the warning colour, Merging or Rebasing with the conflict count, opening the dialog. A conflict reaches the user as git's failure message first. Conflicted files count as unstaged only, marked in the unstaged list, and Stage settles them. Staging shows a conflicted file against `HEAD`, with its markers, as git's combined diff would otherwise reach a parser that doesn't know it. Commit waits while an operation is in progress, or any file is conflicted (a stash can leave one), since committing everything would stage the markers; Continue takes what is staged, with git's message. Git runs with `GIT_EDITOR=true`, so `--continue` never waits for an editor. Undo commit (`reset --soft`, only for a commit with one parent) carries the commit's hash and refuses if another commit came meanwhile; it confirms only when the upstream has the commit, and its message goes into the commit dialog unless one was written since. Discard everything takes the files the overview lists, as explicit paths, so nothing an agent creates after the confirm goes. Delete branch acts on the branch selected in Branches, with `-D` after a confirm saying whether `HEAD` lacks its commits. Force push uses `--force-with-lease`, offered once the branch is both ahead of and behind its upstream. None of these got a key but Merge or rebase.
+
 Tasks:
 
-- [ ] Merge a branch into the current one, and abort a merge
-- [ ] Rebase the current branch onto another, and abort a rebase
-- [ ] Show a merge or rebase in progress, with its conflicted files
-- [ ] Discard everything, from the palette, after a confirm
-- [ ] Undo the last commit, leaving its changes staged
-- [ ] Decide which of the candidates are worth building
+- [x] Merge a branch into the current one, and abort a merge
+- [x] Rebase the current branch onto another, and abort a rebase
+- [x] Show a merge or rebase in progress, with its conflicted files
+- [x] Discard everything, from the palette, after a confirm
+- [x] Undo the last commit, leaving its changes staged
+- [x] Decide which of the candidates are worth building
+- [x] Delete a branch, after a confirm
+- [x] Force push, with a lease, after a confirm
 
 ### Step 5: UI refinements
 

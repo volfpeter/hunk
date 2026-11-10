@@ -113,7 +113,7 @@ impl Review {
                 };
                 Ok(diff(repo, &[&base])? + &untracked_patch(repo)?)
             }
-            Review::Unstaged => Ok(diff(repo, &[])? + &untracked_patch(repo)?),
+            Review::Unstaged => Ok(diff_unstaged(repo)? + &untracked_patch(repo)?),
             Review::Commit(commit) => repo.run(&["show", "--no-ext-diff", WHOLE_FILE, "--format=", "--diff-merges=first-parent", commit]),
             Review::Branch { base, branch } => diff(repo, &[&format!("{base}...{branch}")]),
             Review::Stash(stash) => repo.run(&["stash", "show", "--no-ext-diff", WHOLE_FILE, "--patch", "--include-untracked", &stash_commit(repo, stash)?]),
@@ -142,6 +142,28 @@ pub fn stash_commit(repo: &Repo, stash: &str) -> Result<String> {
 fn diff(repo: &Repo, revisions: &[&str]) -> Result<String> {
     let args: Vec<&str> = ["diff", "--no-ext-diff", WHOLE_FILE].iter().chain(revisions).copied().collect();
     repo.run(&args)
+}
+
+/// The index against the worktree. A conflicted file has no one version staged, so it goes
+/// against `HEAD`, showing its conflict markers where a combined diff would have stood.
+fn diff_unstaged(repo: &Repo) -> Result<String> {
+    let patch = diff(repo, &[])?;
+    let conflicted: Vec<String> = repo.run(&["diff", "--name-only", "-z", "--diff-filter=U"])?.split_terminator('\0').map(str::to_owned).collect();
+    if conflicted.is_empty() {
+        return Ok(patch);
+    }
+    // A header starts the line, where a line of a file always has a prefix.
+    let mut kept = String::new();
+    let mut combined = false;
+    for line in patch.split_inclusive('\n') {
+        if line.starts_with("diff --") {
+            combined = line.starts_with("diff --cc ");
+        }
+        if !combined {
+            kept.push_str(line);
+        }
+    }
+    Ok(kept + &repo.run_on(&["diff", "--no-ext-diff", WHOLE_FILE, "HEAD"], &conflicted)?)
 }
 
 /// The file at `path` in `revision`, or in the index when `revision` is empty.
@@ -209,6 +231,25 @@ mod tests {
         fixture.write("a.txt", "worktree\n");
         let patch = Review::Unstaged.patch(&fixture.repo).unwrap();
         assert!(patch.contains("-staged") && patch.contains("+worktree") && !patch.contains("committed"), "{patch}");
+    }
+
+    #[test]
+    fn unstaged_shows_a_conflicted_file_against_head_with_its_markers() {
+        let fixture = Fixture::new();
+        fixture.commit("a.txt", "one\n", "first");
+        fixture.git(&["checkout", "-q", "-b", "feature"]);
+        fixture.commit("a.txt", "feature\n", "feature");
+        fixture.git(&["checkout", "-q", "main"]);
+        fixture.commit("a.txt", "main\n", "main");
+        fixture.commit("z.txt", "one\n", "after");
+        assert!(fixture.repo.run(&["merge", "--no-edit", "feature"]).is_err());
+        fixture.write("z.txt", "two\n");
+
+        let patch = Review::Unstaged.patch(&fixture.repo).unwrap();
+
+        assert!(!patch.contains("diff --cc"), "{patch}");
+        assert_eq!(paths(&patch), ["z.txt", "a.txt"]);
+        assert!(patch.contains("+<<<<<<< HEAD") && patch.contains("+feature"), "{patch}");
     }
 
     #[test]

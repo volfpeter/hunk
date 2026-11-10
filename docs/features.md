@@ -109,8 +109,23 @@ Everything the app does, to try at your own pace. A tick means Peter tried it an
 - [ ] Commit shows how many files are staged, and no count when none are
 - [ ] Pull and Push show how many commits there are to get or send
 - [ ] When either has commits to move, both show a count, 0 included, so they keep the same width
+- [ ] Undo the last commit from the palette, keeping its changes staged and its message for the next commit; it asks first once the commit is pushed
+- [ ] Discard all changes (Changes) or all unstaged changes (Staging) from the palette, after a confirm counting the new files it deletes
+- [ ] Delete the branch selected in Branches from the palette, the confirm saying whether its commits are lost
+- [ ] Force push from the palette once the branch and its remote went apart, refused if the remote moved since the last fetch
 - [ ] When git fails, its message shows in a dialog
 - [ ] A notice says what an operation did, for a few seconds: commit, stash, checkout, discard, pull, push and the rest, but not staging
+
+## Merge and rebase
+
+- [ ] Ctrl+Shift+M, or Merge or rebase in the palette, opens a dialog of the other branches, local then only on a remote, filtered by typing
+- [ ] Pick Merge or Rebase there, each saying which branch goes where
+- [ ] Rebasing a pushed branch warns that sending it takes Force push
+- [ ] A conflict stops it, showing git's message, and the bar says Merging or Rebasing with the conflict count
+- [ ] Conflicted files are marked in the unstaged list, and Staging shows them with their conflict markers
+- [ ] Ctrl+Shift+M, or the bar, opens what is in progress: the conflicted files, Abort (asks first) and Continue (once none is left)
+- [ ] Continue finishes a merge with git's message, and goes on with a rebase, without an editor
+- [ ] Commit waits while a merge or rebase is in progress, or a file is conflicted
 
 ## Pull requests
 

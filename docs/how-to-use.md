@@ -99,11 +99,21 @@ Each file in the diff has its buttons in its header:
 
 To commit, press **Commit** at the right of the bar, the dot on a line, which shows how many files are staged, **Ctrl+Enter** (or run **Git: Commit** from the [command palette](#commands)), write a message and press the dialog's **Commit**, or **Ctrl+Enter**. On its left, the dialog sums up what the commit takes: new, changed and deleted files. It also lists what stays uncommitted, marking files the commit takes only part of, which often means you forgot to stage something. With nothing staged, the commit takes everything, new files included. **Enter** starts a new line. Your commit hooks run as usual. Closing the dialog keeps the message, and so does a commit that fails.
 
+**Git: Undo last commit** in the [command palette](#commands) takes the last commit back, leaving its changes staged and its message in the commit dialog, unless you've written another since. It asks first when the commit is already pushed, as sending what you commit instead then takes **Force push**. It isn't offered for a merge commit.
+
+**Git: Discard all changes** in **Changes**, or **Git: Discard all unstaged changes** in **Staging**, drops everything the view shows, after a confirm that counts the new files it deletes. This can't be undone.
+
 ## Branches and stashes
 
-- **Branches:** the branch you're on is picked when you open it. Select another and press **Check out** to switch to it. To switch or start a branch, see [Switch branches](#switch-branches). Whichever way you switch, even from a terminal, the view moves to the branch you're now on.
+- **Branches:** the branch you're on is picked when you open it. Select another and press **Check out** to switch to it, or run **Git: Delete branch** from the [command palette](#commands), which says whether commits are lost before it deletes. To switch or start a branch, see [Switch branches](#switch-branches). Whichever way you switch, even from a terminal, the view moves to the branch you're now on.
 - **Ctrl+Shift+S**, or **Git: Stash** in the [command palette](#commands), puts changes aside. Give the stash a name if you like, and pick what it takes: your changes and new files, your changes alone, or only what's staged.
 - **Stashes:** select one and press **Apply** to bring it back and keep it, **Pop** to bring it back and remove it, or **Drop** to delete it, which asks first. Double-clicking a stash applies it.
+
+## Merge and rebase
+
+**Ctrl+Shift+M**, or **Git: Merge or rebase** in the [command palette](#commands), lists your other branches, then those only on a remote. Type to filter and pick one with the arrow keys or a click. Then choose **Merge**, which brings its commits into your branch, or **Rebase**, which makes your branch's own commits again on top of it, and press the button or **Enter**. Rebasing a branch you've pushed warns you first: sending it afterwards takes **Force push**.
+
+A conflict stops either, and the bar says **Merging** or **Rebasing** with the number of conflicts until it's done. Conflicted files show up in the unstaged list, marked as such, with their conflict markers in the diff. Settle them in your editor and stage them. Click **Merging** or **Rebasing** in the bar, or press **Ctrl+Shift+M** again, to see what's left: **Continue** finishes the merge with Git's own message, or goes on with the rebase, once no file is conflicted. **Abort** asks first, then puts everything back as it was before. Commit waits until the merge or rebase is over.
 
 ## Pull requests
 
@@ -128,6 +138,8 @@ Type a name no branch has, and the list offers **Create branch** with it, starti
 ## Pull and push
 
 **Pull** (the arrow down) and **Push** (the arrow up) sit at the right of the bar, each with the number of commits there are to get or send when either has some, so both show a count, even if one is 0. Hover them for their keys. **Ctrl+Shift+↓** pulls and **Ctrl+Shift+↑** pushes. A branch that was never pushed goes to `origin`.
+
+Once your branch and its remote went apart, for instance after a rebase, **Git: Force push** in the [command palette](#commands) replaces the remote's branch with yours, after a confirm saying how many of its commits are lost. If someone pushed there since you last fetched, it refuses instead.
 
 They use your own Git setup, but can't answer prompts: if Git needs a password it fails and shows you why. When anything fails, you see what Git said. When it works, a notice in the bottom right says what happened, for a few seconds; staging and unstaging show in the lists instead.
 

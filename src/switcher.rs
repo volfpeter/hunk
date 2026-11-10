@@ -27,6 +27,17 @@ impl BranchOffer {
     /// The branches whose names hold every word `typed`, ignoring case, and a new branch named
     /// `typed` when no branch has that name and git could take it as one.
     pub fn new(typed: &str, local: &[Entry], remote: &[RemoteBranch]) -> BranchOffer {
+        let BranchOffer { mut choices, more } = BranchOffer::existing(typed, local, remote);
+        let name = typed.trim();
+        let taken = local.iter().any(|branch| branch.id == name) || remote.iter().any(|branch| branch.name == name || branch.id() == name);
+        if !name.is_empty() && !name.contains(char::is_whitespace) && !taken {
+            choices.push(BranchChoice::Create(name.to_owned()));
+        }
+        BranchOffer { choices, more }
+    }
+
+    /// The branches whose names hold every word `typed`, ignoring case.
+    pub fn existing(typed: &str, local: &[Entry], remote: &[RemoteBranch]) -> BranchOffer {
         let words: Vec<String> = typed.split_whitespace().map(str::to_lowercase).collect();
         let matches = |name: &str| {
             let name = name.to_lowercase();
@@ -37,12 +48,6 @@ impl BranchOffer {
         let mut choices: Vec<BranchChoice> = local_matches.chain(remote_matches).collect();
         let more = choices.len().saturating_sub(SHOWN);
         choices.truncate(SHOWN);
-
-        let name = typed.trim();
-        let taken = local.iter().any(|branch| branch.id == name) || remote.iter().any(|branch| branch.name == name || branch.id() == name);
-        if !name.is_empty() && !name.contains(char::is_whitespace) && !taken {
-            choices.push(BranchChoice::Create(name.to_owned()));
-        }
         BranchOffer { choices, more }
     }
 }

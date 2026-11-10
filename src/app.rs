@@ -10,13 +10,13 @@ use rune_kit::diff::{Annotation, DiffMode, DiffState, FileDiff, LineRange, LineR
 use rune_kit::{FileNode, FileTree, TreeModel};
 use serde::{Deserialize, Serialize};
 
-use crate::action::{Action, Stashed};
+use crate::action::{Action, Integration, Stashed};
 use crate::comments::{Anchor, Comment, Comments, prompt};
 use crate::forge::Hosted;
 use crate::gh::{self, PullRequest};
 use crate::git::{Repo, Result};
 use crate::open::{Choice, Offer, Opened, resolve};
-use crate::overview::{Entry, FileStatus, LineCounts, Overview};
+use crate::overview::{Change, Entry, FileStatus, LastCommit, LineCounts, Operation, Overview};
 use crate::recent::Recents;
 use crate::review::{Loaded, Review, files};
 use crate::settings::Settings;
@@ -176,6 +176,7 @@ pub const PULL: &str = "Ctrl+Shift+↓";
 pub const PUSH: &str = "Ctrl+Shift+↑";
 const FETCH: &str = "Ctrl+Shift+F";
 pub const COPY: &str = "Ctrl+Shift+C";
+pub const MERGE: &str = "Ctrl+Shift+M";
 /// The key of each view of the repository, in the order of `Kind::ALL`.
 const VIEWS: [&str; 5] = ["Ctrl+1", "Ctrl+2", "Ctrl+3", "Ctrl+4", "Ctrl+5"];
 pub const COMMENTS: &str = "Ctrl+0";
@@ -192,6 +193,7 @@ fn command_shortcut(event: &KeyEvent) -> Option<&'static str> {
         _ if ctrl_shift && event.is_command('c') => Some(COPY),
         _ if ctrl_shift && event.is_command('s') => Some(STASH),
         _ if ctrl_shift && event.is_command('f') => Some(FETCH),
+        _ if ctrl_shift && event.is_command('m') => Some(MERGE),
         _ if event.is_command('0') => Some(COMMENTS),
         _ if event.is_command('\\') => Some(LAYOUT),
         _ => None,
@@ -270,6 +272,11 @@ pub struct State {
     pub managing_remotes: bool,
     pub remote_name_text: TextEdit,
     pub remote_url_text: TextEdit,
+    /// The highlighted row of the merge dialog, while it is open.
+    pub merger: Option<usize>,
+    pub merge_text: TextEdit,
+    /// How the merge dialog brings in the branch picked.
+    pub integration: Integration,
     /// The action waiting to be confirmed.
     pub confirming: Option<Action>,
     /// What the action in the background is called.
@@ -340,6 +347,9 @@ impl State {
             managing_remotes: false,
             remote_name_text: TextEdit::default(),
             remote_url_text: TextEdit::default(),
+            merger: None,
+            merge_text: TextEdit::default(),
+            integration: Integration::Merge,
             confirming: None,
             running: None,
             action_failure: None,
@@ -870,6 +880,68 @@ impl State {
         };
     }
 
+    /// What discarding everything means in the view on screen: back to `HEAD` in Changes, back
+    /// to what is staged in Staging.
+    fn discard_all(&self) -> Option<Action> {
+        let paths = |test: fn(FileStatus) -> bool| {
+            let mut paths: Vec<String> = self.overview.files.iter().filter(|(_, status)| test(**status)).map(|(path, _)| path.clone()).collect();
+            paths.sort_unstable();
+            paths
+        };
+        let action = match self.kind {
+            _ if self.showing_comments => return None,
+            Kind::Changes => Action::DiscardChanges(paths(|_| true)),
+            Kind::Staging => Action::DiscardUnstaged(paths(|status| status.unstaged.is_some())),
+            _ => return None,
+        };
+        match &action {
+            Action::DiscardChanges(paths) | Action::DiscardUnstaged(paths) if paths.is_empty() => None,
+            _ => Some(action),
+        }
+    }
+
+    /// Everything the view on screen shows goes, once confirmed.
+    pub fn ask_to_discard_all(&mut self) {
+        self.confirming = self.discard_all();
+    }
+
+    /// How many of the files `action` discards it deletes, as nothing else holds them.
+    pub fn deleted_by(&self, action: &Action) -> usize {
+        let (paths, back_to_head) = match action {
+            Action::DiscardChanges(paths) => (paths, true),
+            Action::DiscardUnstaged(paths) => (paths, false),
+            _ => return 0,
+        };
+        let deleted = |status: &FileStatus| match (status.staged, status.unstaged) {
+            (Some(Change::New), _) => back_to_head,
+            (None, Some(Change::New)) => true,
+            _ => false,
+        };
+        paths.iter().filter_map(|path| self.overview.files.get(path)).filter(|status| deleted(status)).count()
+    }
+
+    /// The last commit, while undoing it can leave its changes staged: it has one parent, and
+    /// no merge or rebase is under way.
+    fn undoable(&self) -> Option<&LastCommit> {
+        self.overview.last_commit.as_ref().filter(|commit| commit.parents == 1 && self.overview.operation.is_none())
+    }
+
+    /// Whether the upstream holds the last commit already.
+    pub fn head_pushed(&self) -> bool {
+        self.overview.upstream.is_some_and(|upstream| upstream.ahead == 0)
+    }
+
+    /// Undoes the last commit, keeping its changes staged, once confirmed if it was pushed.
+    pub fn undo_commit(&mut self) {
+        let Some(last) = self.undoable() else { return };
+        let action = Action::UndoCommit { commit: last.hash.clone(), message: last.message.clone() };
+        if self.head_pushed() {
+            self.confirming = Some(action);
+        } else {
+            self.run(action);
+        }
+    }
+
     pub fn ask_to_drop_stash(&mut self) {
         self.confirming = self.selected_of(Kind::Stashes).map(Action::DropStash);
     }
@@ -892,9 +964,10 @@ impl State {
         self.running.is_none() && self.overview.files.values().any(|status| status.staged.is_some())
     }
 
-    /// Whether there is anything to commit.
+    /// Whether there is anything to commit, and no merge or rebase to finish first. A conflict
+    /// left by applying a stash stops it too, as committing everything would stage it.
     pub fn can_start_commit(&self) -> bool {
-        self.running.is_none() && !self.overview.files.is_empty()
+        self.running.is_none() && !self.overview.files.is_empty() && self.overview.operation.is_none() && self.overview.conflicted().is_empty()
     }
 
     pub fn can_commit(&self) -> bool {
@@ -996,6 +1069,86 @@ impl State {
             BranchChoice::Local(branch) => self.run(Action::Checkout(branch.id)),
             BranchChoice::Remote(branch) => self.run(Action::Track { remote: branch.remote, branch: branch.name }),
             BranchChoice::Create(name) => self.run(Action::CreateBranch(name)),
+        }
+    }
+
+    /// The selected branch is deleted, once confirmed. Not the current one.
+    pub fn ask_to_delete_branch(&mut self) {
+        self.confirming = self.branch_to_check_out().map(Action::DeleteBranch);
+    }
+
+    /// Opens the merge dialog: the branches to bring in, or the merge or rebase that stopped.
+    pub fn open_merger(&mut self) {
+        self.palette = None;
+        self.merge_text = TextEdit::default();
+        self.integration = Integration::Merge;
+        self.merger = Some(0);
+        self.focus(|s| &mut s.merge_text);
+    }
+
+    pub fn close_merger(&mut self) {
+        self.merger = None;
+    }
+
+    /// What the merge dialog offers for the name typed: every branch but the current one.
+    pub fn merge_offer(&self) -> BranchOffer {
+        let others: Vec<Entry> = self.overview.branches.iter().filter(|branch| branch.id != self.overview.head).cloned().collect();
+        BranchOffer::existing(&self.merge_text.text, &others, &self.overview.remote_branches)
+    }
+
+    /// Moves the merge dialog's highlight by `rows`, stopping at the ends.
+    pub fn move_merger(&mut self, rows: isize) {
+        let last = self.merge_offer().choices.len().saturating_sub(1);
+        self.merger = self.merger.map(|active| active.saturating_add_signed(rows).min(last));
+    }
+
+    /// The branch on row `row` of the merge dialog, as git knows it.
+    pub fn merge_choice(&self, row: usize) -> Option<String> {
+        match self.merge_offer().choices.into_iter().nth(row)? {
+            BranchChoice::Local(branch) => Some(branch.id),
+            BranchChoice::Remote(branch) => Some(branch.id()),
+            BranchChoice::Create(_) => None,
+        }
+    }
+
+    /// Whether a branch can be brought in: there is a commit to bring it into, and nothing else
+    /// under way.
+    pub fn can_integrate(&self) -> bool {
+        self.running.is_none() && self.overview.operation.is_none() && self.overview.last_commit.is_some()
+    }
+
+    /// Brings in the branch on row `row` of the merge dialog the way picked, and closes it.
+    pub fn integrate(&mut self, row: usize) {
+        let Some(branch) = self.merge_choice(row).filter(|_| self.can_integrate()) else { return };
+        self.close_merger();
+        self.run(Action::Integrate(self.integration, branch));
+    }
+
+    /// How the merge or rebase that stopped brings its branch in.
+    fn stopped(&self) -> Option<Integration> {
+        self.overview.operation.as_ref().map(|operation| match operation {
+            Operation::Merge { .. } => Integration::Merge,
+            Operation::Rebase { .. } => Integration::Rebase,
+        })
+    }
+
+    /// Whether the stopped merge or rebase can go on: no file is left conflicted.
+    pub fn can_continue(&self) -> bool {
+        self.running.is_none() && self.stopped().is_some() && self.overview.conflicted().is_empty()
+    }
+
+    pub fn continue_operation(&mut self) {
+        if let Some(way) = self.stopped().filter(|_| self.can_continue()) {
+            self.close_merger();
+            self.run(Action::Continue(way));
+        }
+    }
+
+    /// Gives up the stopped merge or rebase, once confirmed.
+    pub fn ask_to_abort(&mut self) {
+        if let Some(way) = self.stopped().filter(|_| self.running.is_none()) {
+            self.close_merger();
+            self.confirming = Some(Action::Abort(way));
         }
     }
 
@@ -1150,6 +1303,17 @@ impl State {
         self.running.is_none() && self.overview.upstream.is_none_or(|upstream| upstream.ahead > 0)
     }
 
+    /// Whether the branch and its upstream went apart, which only a force push can send.
+    pub fn can_force_push(&self) -> bool {
+        self.running.is_none() && self.overview.upstream.is_some_and(|upstream| upstream.ahead > 0 && upstream.behind > 0)
+    }
+
+    pub fn ask_to_force_push(&mut self) {
+        if self.can_force_push() {
+            self.confirming = Some(Action::ForcePush);
+        }
+    }
+
     pub fn open_palette(&mut self) {
         self.palette_text = TextEdit::default();
         self.palette = Some(0);
@@ -1240,6 +1404,8 @@ impl State {
             Ok(()) => {
                 match action {
                     Action::Commit(_) | Action::CommitAll(_) => self.commit_text = TextEdit::default(),
+                    // A message written since stays.
+                    Action::UndoCommit { message, .. } if self.commit_text.text.trim().is_empty() => self.commit_text = TextEdit::new(message.clone()),
                     Action::Fetch => self.look_for_pull_requests(true),
                     Action::AddRemote { .. } => {
                         self.remote_name_text = TextEdit::default();
@@ -1285,7 +1451,12 @@ impl State {
 
         offer(self.can_stage_all(), Command::new("Git", "Stage all", |s, _| s.run(Action::StageAll)));
         offer(self.can_unstage_all(), Command::new("Git", "Unstage all", |s, _| s.run(Action::UnstageAll)));
+        if let Some(discard) = self.discard_all() {
+            let label = if matches!(discard, Action::DiscardChanges(_)) { "Discard all changes" } else { "Discard all unstaged changes" };
+            offer(idle, Command::new("Git", label, |s, _| s.ask_to_discard_all()));
+        }
         offer(self.can_start_commit(), Command::new("Git", "Commit", |s, _| s.start_commit()).shortcut(COMMIT));
+        offer(idle && self.undoable().is_some(), Command::new("Git", "Undo last commit", |s, _| s.undo_commit()));
         offer(self.can_stash(), Command::new("Git", "Stash", |s, _| s.start_stash()).shortcut(STASH));
         if let Some(stash) = self.selected_stash() {
             offer(idle, Command::new("Git", format!("Apply stash {stash}"), |s, _| s.apply_selected_stash()));
@@ -1294,7 +1465,10 @@ impl State {
         }
         if let Some(branch) = self.branch_to_check_out() {
             offer(idle, Command::new("Git", format!("Check out {branch}"), |s, _| s.check_out_selected()));
+            offer(idle, Command::new("Git", format!("Delete branch {branch}"), |s, _| s.ask_to_delete_branch()));
         }
+        let merge = if self.overview.operation.is_some() { "Merge or rebase in progress" } else { "Merge or rebase" };
+        offer(self.overview.last_commit.is_some(), Command::new("Git", merge, |s, _| s.open_merger()).shortcut(MERGE));
         let shown = self.branch_on_forge().zip(self.pull_request_offer()).map(|(((_, branch), _), offer)| match offer {
             PullRequestOffer::Existing(found) => format!("Open pull request #{}", found.number),
             PullRequestOffer::New { .. } => format!("Create pull request for {branch}"),
@@ -1310,6 +1484,7 @@ impl State {
         offer(self.can_fetch(), Command::new("Git", "Fetch", |s, _| s.run(Action::Fetch)).shortcut(FETCH));
         offer(idle, Command::new("Git", "Pull", |s, _| s.run(Action::Pull)).shortcut(PULL));
         offer(self.can_push(), Command::new("Git", "Push", |s, _| s.run(Action::Push)).shortcut(PUSH));
+        offer(self.can_force_push(), Command::new("Git", "Force push", |s, _| s.ask_to_force_push()));
         offer(true, Command::new("Git", "Remotes", |s, _| s.open_remotes()));
         offer(true, Command::new("Git", "Refresh", |s, _| s.refresh_all()));
 
@@ -1358,7 +1533,7 @@ impl State {
     }
 
     fn dialog_open(&self) -> bool {
-        let pickers = self.switcher.is_some() || self.shell.opener.is_some();
+        let pickers = self.switcher.is_some() || self.merger.is_some() || self.shell.opener.is_some();
         let dialogs = self.deleting.is_some() || self.confirming.is_some() || self.committing || self.stashing.is_some() || self.managing_remotes || self.action_failure.is_some() || self.showing_keys;
         pickers || dialogs
     }
@@ -1402,7 +1577,7 @@ impl State {
 
     /// Gives the keyboard to one text field, which takes it from every other.
     fn focus(&mut self, field: fn(&mut State) -> &mut TextEdit) {
-        let fields = [&mut self.draft_text, &mut self.edit_text, &mut self.commit_text, &mut self.stash_text, &mut self.branch_text, &mut self.remote_name_text, &mut self.remote_url_text, &mut self.palette_text, &mut self.shell.open_text];
+        let fields = [&mut self.draft_text, &mut self.edit_text, &mut self.commit_text, &mut self.stash_text, &mut self.branch_text, &mut self.remote_name_text, &mut self.remote_url_text, &mut self.merge_text, &mut self.palette_text, &mut self.shell.open_text];
         for text in fields {
             text.focused = false;
         }
@@ -1834,6 +2009,87 @@ mod tests {
         state.commit_text = TextEdit::new("Take it all".to_owned());
         state.finish_action(&Action::CommitAll("Take it all".into()), Ok(()));
         assert_eq!(state.commit_text.text, "");
+    }
+
+    #[test]
+    fn discarding_everything_means_what_the_view_shows_and_counts_the_new_files_it_deletes() {
+        let (_fixture, mut state) = state();
+        let new = |staged| FileStatus { staged, unstaged: staged.is_none().then_some(Change::New) };
+        state.overview.files = HashMap::from([("a.txt".to_owned(), status(true, false)), ("b.txt".to_owned(), new(Some(Change::New))), ("c.txt".to_owned(), new(None))]);
+
+        state.select_kind(Kind::Changes);
+        state.ask_to_discard_all();
+        let everything = state.confirming.clone().unwrap();
+        assert_eq!(everything, Action::DiscardChanges(vec!["a.txt".into(), "b.txt".into(), "c.txt".into()]));
+        assert_eq!(state.deleted_by(&everything), 2);
+
+        state.select_kind(Kind::Staging);
+        state.ask_to_discard_all();
+        let unstaged = state.confirming.clone().unwrap();
+        assert_eq!(unstaged, Action::DiscardUnstaged(vec!["c.txt".into()]));
+        assert_eq!(state.deleted_by(&unstaged), 1);
+
+        state.toggle_comments();
+        state.cancel_action();
+        state.ask_to_discard_all();
+        assert_eq!(state.confirming, None, "the comments page shows no changes");
+    }
+
+    #[test]
+    fn undoing_a_commit_asks_only_once_pushed_and_brings_its_message_back_unless_another_was_written() {
+        let (_fixture, mut state) = state();
+        let last = |parents| Some(LastCommit { hash: "abc".into(), parents, message: "Fix it".into() });
+        let undo = Action::UndoCommit { commit: "abc".into(), message: "Fix it".into() };
+        state.overview.last_commit = last(2);
+        assert!(!state.commands().iter().any(|command| command.label == "Undo last commit"), "a merge commit");
+
+        state.overview.last_commit = last(1);
+        state.undo_commit();
+        assert_eq!((state.confirming.as_ref(), state.running), (None, Some("Undo commit")));
+        state.finish_action(&undo, Ok(()));
+        assert_eq!(state.commit_text.text, "Fix it");
+
+        state.commit_text = TextEdit::new("Newer".to_owned());
+        state.finish_action(&undo, Ok(()));
+        assert_eq!(state.commit_text.text, "Newer");
+
+        state.overview.upstream = Some(Upstream { ahead: 0, behind: 0 });
+        state.undo_commit();
+        assert_eq!(state.confirming, Some(undo));
+    }
+
+    #[test]
+    fn a_stopped_merge_or_a_conflict_holds_up_committing_and_only_settled_conflicts_continue() {
+        let (_fixture, mut state) = state();
+        state.overview.files = HashMap::from([("a.txt".to_owned(), FileStatus { staged: None, unstaged: Some(Change::Conflicted) })]);
+        assert!(!state.can_start_commit(), "committing everything would stage the conflict");
+
+        state.overview.operation = Some(Operation::Merge { branch: "feature".into() });
+        assert!(!state.can_continue());
+        state.overview.files = HashMap::from([("a.txt".to_owned(), status(true, false))]);
+        assert!(!state.can_start_commit() && state.can_continue());
+
+        state.open_merger();
+        state.continue_operation();
+        assert_eq!((state.merger, state.running), (None, Some("Continue merge")));
+    }
+
+    #[test]
+    fn the_merge_dialog_offers_every_branch_but_the_current_one_and_brings_in_the_highlighted() {
+        let (_fixture, mut state) = state();
+        state.overview.head = "main".into();
+        state.overview.last_commit = Some(LastCommit { hash: "abc".into(), parents: 1, message: String::new() });
+        state.overview.branches = ["main", "feature"].map(|name| Entry { id: name.to_owned(), title: name.to_owned(), detail: String::new() }).to_vec();
+        state.overview.remote_branches = vec![crate::overview::RemoteBranch { remote: "origin".into(), name: "fix".into(), age: String::new() }];
+        let ctrl_shift_m = KeyEvent { key: Key::Command('m'), mods: rune::Mods { ctrl: true, cmd: true, shift: true, ..rune::Mods::default() } };
+
+        state.on_key(&ctrl_shift_m, &mut Tx::default());
+        assert_eq!((state.merger, state.merge_choice(0), state.merge_choice(1)), (Some(0), Some("feature".into()), Some("origin/fix".into())));
+
+        state.move_merger(5);
+        state.integration = Integration::Rebase;
+        state.integrate(state.merger.unwrap());
+        assert_eq!((state.merger, state.running), (None, Some("Rebase")));
     }
 
     #[test]

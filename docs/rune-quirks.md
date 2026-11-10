@@ -55,6 +55,7 @@ Check with a long string without spaces, in a narrow window.
 - `List` cuts long labels at the end, so give it the file name rather than a path.
 - `ListItem` has no slot for a shortcut, unlike `MenuItem`, so a key can only go in the label.
 - `List`'s highlighted row is a faint fill, hard to see. A list that's driven by the keyboard needs its own rows.
+- `Tree` builds its rows with press and double-press only, so a right-click menu can't tell which row it was over.
 
 ## Headless scripts
 

@@ -18,10 +18,20 @@ pub enum Action {
     Commit(String),
     /// Stages everything, then commits it.
     CommitAll(String),
+    /// Steps back from the commit, keeping its changes staged. `message` is what it said.
+    UndoCommit { commit: String, message: String },
     Checkout(String),
     /// Checks out `branch` of `remote` as a local branch tracking it.
     Track { remote: String, branch: String },
     CreateBranch(String),
+    /// Deletes the local branch, whether another branch holds its commits or not.
+    DeleteBranch(String),
+    /// Brings in another branch, its name as git knows it.
+    Integrate(Integration, String),
+    /// Gives up the stopped merge or rebase, going back to where it started.
+    Abort(Integration),
+    /// Goes on with the stopped merge or rebase, taking what is staged.
+    Continue(Integration),
     /// Puts changes aside, named `name` unless it is empty.
     Stash { name: String, takes: Stashed },
     ApplyStash(String),
@@ -31,8 +41,35 @@ pub enum Action {
     Fetch,
     Pull,
     Push,
+    /// Replaces the upstream with the branch, unless it holds commits not fetched yet.
+    ForcePush,
     AddRemote { name: String, url: String },
     RemoveRemote(String),
+}
+
+/// How another branch comes into the current one.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Integration {
+    /// Its commits join the current branch's in a merge commit, unless it can fast-forward.
+    Merge,
+    /// The current branch's own commits are made again on top of it.
+    Rebase,
+}
+
+impl Integration {
+    pub fn label(self) -> &'static str {
+        match self {
+            Integration::Merge => "Merge",
+            Integration::Rebase => "Rebase",
+        }
+    }
+
+    fn command(self) -> &'static str {
+        match self {
+            Integration::Merge => "merge",
+            Integration::Rebase => "rebase",
+        }
+    }
 }
 
 /// What a stash takes.
@@ -56,8 +93,15 @@ impl Action {
             Action::UnstageAll => "Unstage all",
             Action::DiscardChanges(_) | Action::DiscardUnstaged(_) => "Discard",
             Action::Commit(_) | Action::CommitAll(_) => "Commit",
+            Action::UndoCommit { .. } => "Undo commit",
             Action::Checkout(_) | Action::Track { .. } => "Check out",
             Action::CreateBranch(_) => "New branch",
+            Action::DeleteBranch(_) => "Delete branch",
+            Action::Integrate(way, _) => way.label(),
+            Action::Abort(Integration::Merge) => "Abort merge",
+            Action::Abort(Integration::Rebase) => "Abort rebase",
+            Action::Continue(Integration::Merge) => "Continue merge",
+            Action::Continue(Integration::Rebase) => "Continue rebase",
             Action::Stash { .. } => "Stash",
             Action::ApplyStash(_) => "Apply",
             Action::PopStash(_) => "Pop",
@@ -65,6 +109,7 @@ impl Action {
             Action::Fetch => "Fetch",
             Action::Pull => "Pull",
             Action::Push => "Push",
+            Action::ForcePush => "Force push",
             Action::AddRemote { .. } => "Add remote",
             Action::RemoveRemote(_) => "Remove remote",
         }
@@ -76,8 +121,17 @@ impl Action {
             Action::Stage(_) | Action::Unstage(_) | Action::StageAll | Action::UnstageAll => return None,
             Action::DiscardChanges(_) | Action::DiscardUnstaged(_) => "Discarded changes",
             Action::Commit(_) | Action::CommitAll(_) => "Committed",
+            Action::UndoCommit { .. } => "Undid the commit, its changes are staged",
             Action::Checkout(branch) | Action::Track { branch, .. } => return Some(format!("Switched to {branch}")),
             Action::CreateBranch(name) => return Some(format!("Created and switched to {name}")),
+            Action::DeleteBranch(name) => return Some(format!("Deleted {name}")),
+            Action::Integrate(Integration::Merge, branch) => return Some(format!("Merged {branch}")),
+            Action::Integrate(Integration::Rebase, branch) => return Some(format!("Rebased onto {branch}")),
+            Action::Abort(Integration::Merge) => "Aborted the merge",
+            Action::Abort(Integration::Rebase) => "Aborted the rebase",
+            // Git stops again at the next conflict, which fails.
+            Action::Continue(Integration::Merge) => "Merged",
+            Action::Continue(Integration::Rebase) => "Rebased",
             Action::Stash { .. } => "Stashed",
             Action::ApplyStash(_) => "Applied the stash",
             Action::PopStash(_) => "Popped the stash",
@@ -85,6 +139,7 @@ impl Action {
             Action::Fetch => "Fetched",
             Action::Pull => "Pulled",
             Action::Push => "Pushed",
+            Action::ForcePush => "Force pushed",
             Action::AddRemote { name, .. } => return Some(format!("Added remote {name}")),
             Action::RemoveRemote(name) => return Some(format!("Removed remote {name}")),
         };
@@ -101,10 +156,16 @@ impl Action {
             Action::DiscardUnstaged(paths) => discard_unstaged(repo, paths),
             Action::Commit(message) => repo.run(&["commit", "-m", message]).map(drop),
             Action::CommitAll(message) => Action::StageAll.run(repo).and_then(|()| Action::Commit(message.clone()).run(repo)),
+            Action::UndoCommit { commit, .. } => undo_commit(repo, commit),
             Action::Checkout(branch) => repo.run(&["switch", branch]).map(drop),
             // The full ref, as a local branch may be called `<remote>/<branch>` too.
             Action::Track { remote, branch } => repo.run(&["switch", "-c", branch, "--track", &format!("refs/remotes/{remote}/{branch}")]).map(drop),
             Action::CreateBranch(name) => repo.run(&["switch", "-c", name]).map(drop),
+            Action::DeleteBranch(name) => repo.run(&["branch", "-D", "--", name]).map(drop),
+            Action::Integrate(Integration::Merge, branch) => repo.run(&["merge", "--no-edit", branch]).map(drop),
+            Action::Integrate(Integration::Rebase, branch) => repo.run(&["rebase", branch]).map(drop),
+            Action::Abort(way) => repo.run(&[way.command(), "--abort"]).map(drop),
+            Action::Continue(way) => repo.run(&[way.command(), "--continue"]).map(drop),
             Action::Stash { name, takes } => stash(repo, name, *takes),
             Action::ApplyStash(stash) => repo.run(&["stash", "apply", &stash_commit(repo, stash)?]).map(drop),
             Action::PopStash(stash) => repo.run(&["stash", "pop", &stash_ref(repo, stash)?]).map(drop),
@@ -112,6 +173,7 @@ impl Action {
             Action::Fetch => repo.run(&["fetch", "--all", "--prune"]).map(drop),
             Action::Pull => repo.run(&["pull"]).map(drop),
             Action::Push => push(repo),
+            Action::ForcePush => repo.run(&["push", "--force-with-lease"]).map(drop),
             Action::AddRemote { name, url } => repo.run(&["remote", "add", "--", name, url]).map(drop),
             Action::RemoveRemote(name) => repo.run(&["remote", "remove", name]).map(drop),
         }
@@ -133,6 +195,14 @@ fn discard_unstaged(repo: &Repo, paths: &[String]) -> Result<()> {
         repo.run_on(&["clean", "-f"], &untracked)?;
     }
     Ok(())
+}
+
+/// Undoes `commit` only while it is the last one, which a refresh may not have shown yet.
+fn undo_commit(repo: &Repo, commit: &str) -> Result<()> {
+    if repo.head_commit()?.as_deref() != Some(commit) {
+        return Err(GitError::new("The last commit changed meanwhile, so nothing was undone."));
+    }
+    repo.run(&["reset", "-q", "--soft", &format!("{commit}~1")]).map(drop)
 }
 
 /// Where the stash with the hash `stash` sits right now: `pop` and `drop` take nothing else.
@@ -447,6 +517,110 @@ mod tests {
         let error = Action::ApplyStash(older).run(&fixture.repo).unwrap_err();
 
         assert!(error.to_string().contains("CONFLICT"), "{error}");
+    }
+
+    /// `main` and `feature` changing the same line of `a.txt` apart, on `main`.
+    fn with_clashing_branches() -> Fixture {
+        let fixture = Fixture::new();
+        fixture.commit("a.txt", "one\n", "first");
+        fixture.git(&["checkout", "-q", "-b", "feature"]);
+        fixture.commit("a.txt", "feature\n", "feature");
+        fixture.git(&["checkout", "-q", "main"]);
+        fixture.commit("a.txt", "main\n", "main");
+        fixture
+    }
+
+    fn head(fixture: &Fixture) -> String {
+        fixture.git(&["rev-parse", "HEAD"]).trim().to_owned()
+    }
+
+    #[test]
+    fn a_conflicted_merge_stops_and_aborts_back_to_where_it_started() {
+        let fixture = with_clashing_branches();
+        let before = head(&fixture);
+
+        let error = Action::Integrate(Integration::Merge, "feature".into()).run(&fixture.repo).unwrap_err();
+        assert!(error.to_string().contains("CONFLICT"), "{error}");
+
+        Action::Abort(Integration::Merge).run(&fixture.repo).unwrap();
+        assert_eq!((head(&fixture), status(&fixture)), (before, String::new()));
+    }
+
+    #[test]
+    fn a_settled_merge_continues_with_gits_message_and_no_editor() {
+        let fixture = with_clashing_branches();
+        assert!(Action::Integrate(Integration::Merge, "feature".into()).run(&fixture.repo).is_err());
+        fixture.write("a.txt", "both\n");
+        fixture.git(&["add", "a.txt"]);
+
+        Action::Continue(Integration::Merge).run(&fixture.repo).unwrap();
+
+        assert_eq!(fixture.git(&["log", "-1", "--format=%s"]).trim(), "Merge branch 'feature'");
+        assert_eq!(fixture.git(&["rev-list", "--count", "--merges", "HEAD"]).trim(), "1");
+    }
+
+    #[test]
+    fn a_rebase_stops_at_a_conflict_and_continues_or_aborts() {
+        let fixture = with_clashing_branches();
+        fixture.git(&["checkout", "-q", "feature"]);
+        let before = head(&fixture);
+        let rebase = Action::Integrate(Integration::Rebase, "main".into());
+
+        assert!(rebase.run(&fixture.repo).is_err());
+        Action::Abort(Integration::Rebase).run(&fixture.repo).unwrap();
+        assert_eq!(head(&fixture), before);
+
+        assert!(rebase.run(&fixture.repo).is_err());
+        fixture.write("a.txt", "both\n");
+        fixture.git(&["add", "a.txt"]);
+        Action::Continue(Integration::Rebase).run(&fixture.repo).unwrap();
+        assert_eq!(fixture.git(&["log", "--format=%s"]), "feature\nmain\nfirst\n");
+        assert_eq!(fixture.git(&["symbolic-ref", "--short", "HEAD"]).trim(), "feature");
+    }
+
+    #[test]
+    fn undoing_a_commit_keeps_its_changes_staged_unless_another_commit_came_meanwhile() {
+        let fixture = Fixture::new();
+        fixture.commit("a.txt", "one\n", "first");
+        fixture.commit("a.txt", "two\n", "second");
+        let second = head(&fixture);
+        let undo = |commit: &str| Action::UndoCommit { commit: commit.to_owned(), message: String::new() }.run(&fixture.repo);
+
+        undo(&second).unwrap();
+        assert_eq!((fixture.git(&["log", "--format=%s"]), status(&fixture)), ("first\n".to_owned(), "M  a.txt\n".to_owned()));
+
+        fixture.git(&["commit", "-q", "-m", "again"]);
+        assert!(undo(&second).is_err());
+        assert_eq!(fixture.git(&["log", "-1", "--format=%s"]).trim(), "again");
+    }
+
+    #[test]
+    fn deletes_a_branch_even_with_commits_no_other_branch_has() {
+        let fixture = with_clashing_branches();
+        Action::DeleteBranch("feature".into()).run(&fixture.repo).unwrap();
+        assert_eq!(fixture.git(&["branch", "--format=%(refname:short)"]), "main\n");
+    }
+
+    #[test]
+    fn force_pushing_replaces_the_upstream_unless_it_moved_since_the_last_fetch() {
+        let origin = Fixture::new();
+        origin.commit("a.txt", "one\n", "first");
+        origin.git(&["checkout", "-q", "--detach"]);
+        let clone = Fixture::new();
+        clone.git(&["remote", "add", "origin", origin.repo.root().to_str().unwrap()]);
+        clone.git(&["fetch", "-q", "origin"]);
+        clone.git(&["checkout", "-q", "-b", "main", "--track", "origin/main"]);
+        clone.git(&["commit", "-q", "--amend", "-m", "rewritten"]);
+
+        Action::ForcePush.run(&clone.repo).unwrap();
+        assert_eq!(origin.git(&["log", "--format=%s", "main"]), "rewritten\n");
+
+        origin.git(&["checkout", "-q", "main"]);
+        origin.commit("b.txt", "two\n", "someone else's");
+        origin.git(&["checkout", "-q", "--detach"]);
+        clone.git(&["commit", "-q", "--amend", "-m", "rewritten again"]);
+        assert!(Action::ForcePush.run(&clone.repo).is_err());
+        assert_eq!(origin.git(&["log", "-1", "--format=%s", "main"]).trim(), "someone else's");
     }
 
     #[test]

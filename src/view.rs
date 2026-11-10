@@ -5,12 +5,12 @@ use rune::{Key, KeyEvent, Mods};
 use rune_kit::diff::{Annotation, DiffMode, DiffView, FoldRow};
 use rune_kit::{Badge, Button, ButtonVariant, ControlSize, Dialog, FileNode, IconButton, IconButtonVariant, Kit, RadioGroup, RadioItem, SegmentedControl, Spinner, TextArea, TextInput, Toast, ToastRegion, Tree, TreeItem, TreeModel, TreeStyle, root};
 
-use crate::action::{Action, Stashed};
-use crate::app::{APPLICATION, COMMENTS, COMMIT, COPY, Command, DRAFT_NOTE, KEYS, Kind, PALETTE, PULL, PUSH, PullRequestOffer, State, copy_label};
+use crate::action::{Action, Integration, Stashed};
+use crate::app::{APPLICATION, COMMENTS, COMMIT, COPY, Command, DRAFT_NOTE, KEYS, Kind, MERGE, PALETTE, PULL, PUSH, PullRequestOffer, State, copy_label};
 use crate::comments::Comment;
 use crate::gh::{PullRequest, Status};
 use crate::open::{Choice, tilde};
-use crate::overview::{CommitPlan, Entry, LineCounts};
+use crate::overview::{CommitPlan, Entry, LineCounts, Operation};
 use crate::review::Review;
 use crate::switcher::BranchChoice;
 
@@ -44,6 +44,8 @@ const PULL_REQUEST_MAX_WIDTH: f32 = 200.0;
 const KEYS_COLUMN_WIDTH: f32 = 332.0;
 const KEYS_COLUMN_GAP: f32 = 24.0;
 const KEY_ROW_HEIGHT: f32 = 28.0;
+/// The most conflicted files the merge dialog names before counting the rest.
+const CONFLICTS_SHOWN: usize = 8;
 
 /// Two points compared, neither leading to the other.
 static COMPARED: Icon = Icon {
@@ -148,6 +150,8 @@ pub fn view(s: &State, cx: &mut Cx<State>) -> El {
     let mut overlays = Vec::new();
     // Under the confirm for removing a remote.
     remotes_dialog(s, &k, &mut overlays);
+    // Under the confirm for aborting.
+    merge_dialog(s, &k, &mut overlays);
     delete_dialog(s, &k, &mut overlays);
     action_dialog(s, &k, &mut overlays);
     commit_dialog(s, &k, &mut overlays);
@@ -201,6 +205,8 @@ fn bar(s: &State, k: &Kit) -> El {
     let comments = comments.build(k, |s, _| s.toggle_comments());
     let staged = s.overview.staged_files();
     let commit_help = match staged {
+        _ if s.overview.operation.is_some() => "Continue or abort the merge or rebase first".to_owned(),
+        _ if !s.overview.conflicted().is_empty() => "Settle the conflicts first".to_owned(),
         _ if !s.can_start_commit() => "Nothing to commit".to_owned(),
         0 => "Commit everything".to_owned(),
         n => format!("Commit {}", plural(n, "staged file")),
@@ -236,6 +242,7 @@ fn bar(s: &State, k: &Kit) -> El {
         .child(kinds.build(k))
         .child(row().grow(1.0))
         .children(s.running.map(|action| progress(k, action)))
+        .children(s.overview.operation.as_ref().map(|operation| operation_button(s, k, operation)))
         .child(comments.key("comments"))
         .children(s.head_pull_request().map(|found| head_pull_request(k, found)))
         .child(commit.key("commit"))
@@ -306,6 +313,28 @@ impl BarButton {
             None => button,
         };
         button.label_with(move |font, ink| text(count).font(font).color(ink)).on_press_tx(press).build(k)
+    }
+}
+
+/// The merge or rebase that stopped, in the warning colour as it holds up committing, opening
+/// the merge dialog.
+fn operation_button(s: &State, k: &Kit, operation: &Operation) -> El {
+    let label = match (operation, s.overview.conflicted().len()) {
+        (Operation::Merge { .. }, 0) => "Merging".to_owned(),
+        (Operation::Rebase { .. }, 0) => "Rebasing".to_owned(),
+        (Operation::Merge { .. }, n) => format!("Merging, {}", plural(n, "conflict")),
+        (Operation::Rebase { .. }, n) => format!("Rebasing, {}", plural(n, "conflict")),
+    };
+    let ink = k.c.warning.fg;
+    let button = Button::new(label.clone()).variant(ButtonVariant::Ghost).help(underway(s, operation)).shortcut(MERGE);
+    button.label_with(move |font, _| one_line(label).font(font).color(ink)).on_press(State::open_merger).build(k).key("operation")
+}
+
+/// What the merge or rebase that stopped is doing, for people.
+fn underway(s: &State, operation: &Operation) -> String {
+    match operation {
+        Operation::Merge { branch } => format!("Merging {branch} into {}", s.overview.head),
+        Operation::Rebase { branch, onto, step, steps } => format!("Rebasing {branch} onto {onto}, commit {step} of {steps}"),
     }
 }
 
@@ -434,10 +463,12 @@ fn list_header(k: &Kit, summary: String) -> El {
 fn files(s: &State, k: &Kit) -> El {
     let column = col().key("files-column").grow(1.0).min_w(0.0).h_full().padding(8.0).gap(4.0);
     let (kit, worktree, idle) = (k.clone(), !s.kind.has_list(), s.running.is_none());
+    let conflicted: Vec<String> = s.overview.conflicted().into_iter().map(str::to_owned).collect();
     let tree = file_tree(|s| &s.files, |s| &mut s.files, move |node, item| {
         if !worktree {
             return item;
         }
+        let item = if conflicted.contains(&node.path) { item.badge("conflict") } else { item };
         item.trailing(row_action(&kit, "Stage", idle, &node.path, |s, path| s.run(Action::Stage(s.stageable_in(path)))))
     });
     let tree = tree.name("Changed files").on_select(|s: &mut State, path, tx| s.scroll_to_path(path, tx));
@@ -766,16 +797,47 @@ fn delete_dialog(s: &State, k: &Kit, overlays: &mut Vec<El>) {
 /// Asks before an action that can't be taken back.
 fn action_dialog(s: &State, k: &Kit, overlays: &mut Vec<El>) {
     let Some(action) = &s.confirming else { return };
-    let (title, subject, consequence) = match action {
-        Action::DiscardChanges(paths) => ("Discard changes?", paths.join("\n"), "Everything not committed in this file is lost."),
-        Action::DiscardUnstaged(paths) => ("Discard changes?", paths.join("\n"), "Everything not staged in this file is lost."),
-        Action::DropStash(stash) => ("Drop stash?", stash.clone(), "The changes it holds are lost."),
-        Action::RemoveRemote(name) => ("Remove remote?", name.clone(), "Its branches go from here too, and local branches stop tracking them."),
+    let head = &s.overview.head;
+    let discarded = |paths: &[String], kept: &str| {
+        let subject = if paths.len() <= 2 { paths.join("\n") } else { plural(paths.len(), "file") };
+        let place = if paths.len() == 1 { "this file" } else { "these files" };
+        let deleted = match s.deleted_by(action) {
+            0 => String::new(),
+            1 => ", and 1 new file is deleted".to_owned(),
+            n => format!(", and {n} new files are deleted"),
+        };
+        (subject, format!("Everything not {kept} in {place} is lost{deleted}."))
+    };
+    // Whether it can be taken back.
+    let (title, (subject, consequence), lasting) = match action {
+        Action::DiscardChanges(paths) => ("Discard changes?", discarded(paths, "committed"), true),
+        Action::DiscardUnstaged(paths) => ("Discard changes?", discarded(paths, "staged"), true),
+        Action::DropStash(stash) => ("Drop stash?", (stash.clone(), "The changes it holds are lost.".to_owned()), true),
+        // Adding a remote again and fetching brings its branches back.
+        Action::RemoveRemote(name) => ("Remove remote?", (name.clone(), "Its branches go from here too, and local branches stop tracking them.".to_owned()), false),
+        Action::UndoCommit { message, .. } => {
+            let subject = message.lines().next().unwrap_or_default().to_owned();
+            ("Undo the last commit?", (subject, "It is pushed already, so sending what you commit instead takes Force push. Its changes stay staged.".to_owned()), false)
+        }
+        Action::DeleteBranch(branch) => {
+            let unmerged = s.overview.unmerged.contains(branch);
+            let consequence = if unmerged { format!("Its commits that {head} doesn't have are lost.") } else { format!("{head} has all of its commits.") };
+            ("Delete branch?", (branch.clone(), consequence), unmerged)
+        }
+        Action::Abort(way) => {
+            let title = if *way == Integration::Merge { "Abort the merge?" } else { "Abort the rebase?" };
+            let subject = s.overview.operation.as_ref().map(|operation| underway(s, operation)).unwrap_or_default();
+            (title, (subject, "Everything goes back to how it was before it started, and the conflicts you settled are lost.".to_owned()), true)
+        }
+        Action::ForcePush => {
+            let behind = s.overview.upstream.map_or(0, |upstream| upstream.behind);
+            let consequence = format!("The remote's branch becomes yours, losing {} only it has. If it moved since you last fetched, nothing is pushed.", plural(behind as usize, "commit"));
+            ("Force push?", (head.clone(), consequence), true)
+        }
         _ => return,
     };
     let dialog = Dialog::new("confirm-action", title);
-    // Adding a remote again and fetching brings its branches back.
-    let dialog = if matches!(action, Action::RemoveRemote(_)) { dialog } else { dialog.description(UNDONE) };
+    let dialog = if lasting { dialog.description(UNDONE) } else { dialog };
     let body = col()
         .w_full()
         .gap(8.0)
@@ -1081,6 +1143,100 @@ fn separator(k: &Kit, label: Option<&str>) -> El {
     let line = || row().grow(1.0).h(1.0).fill(k.c.border_weak);
     let label = label.map(|label| [text(label.to_owned()).font(k.ty.text_small).color(k.c.text_faint), line()]);
     row().w_full().gap(8.0).pt(6.0).pb(2.0).items_center().child(line()).children(label.into_iter().flatten())
+}
+
+/// The branches to merge or rebase onto, or the merge or rebase that stopped.
+fn merge_dialog(s: &State, k: &Kit, overlays: &mut Vec<El>) {
+    let Some(active) = s.merger else { return };
+    let (title, content) = match &s.overview.operation {
+        Some(operation) => (if matches!(operation, Operation::Merge { .. }) { "Merge in progress" } else { "Rebase in progress" }, stopped(s, k, operation)),
+        None => ("Merge or rebase", integration(s, k, active)),
+    };
+    Dialog::new("merge", title).width(PICKER_WIDTH).fit().open(true).on_close(State::close_merger).child(content).build(k, overlays);
+    pin_to_top(overlays);
+}
+
+/// The branches to bring in, and how.
+fn integration(s: &State, k: &Kit, active: usize) -> El {
+    let field = TextInput::new(&s.merge_text)
+        .width(None)
+        .placeholder("Branch name")
+        .label("Branch")
+        .on_edit(|s: &mut State| &mut s.merge_text)
+        .on_change(|s: &mut State, _: &mut Tx| s.merger = Some(0))
+        .on_submit(|s: &mut State, _: &mut Tx| s.integrate(s.merger.unwrap_or_default()))
+        .on_key(|s: &mut State, event: &KeyEvent, _: &mut Tx| match event.key {
+            Key::Up => {
+                s.move_merger(-1);
+                true
+            }
+            Key::Down => {
+                s.move_merger(1);
+                true
+            }
+            _ => edit_by_word(&mut s.merge_text, event),
+        });
+    let offer = s.merge_offer();
+    let mut list = col().key("merge-branches").role("listbox").w_full().gap(2.0);
+    for (index, choice) in offer.choices.iter().enumerate() {
+        let (title, detail) = match choice {
+            BranchChoice::Local(branch) => (branch.id.clone(), branch.detail.clone()),
+            BranchChoice::Remote(branch) => (branch.id(), branch.age.clone()),
+            BranchChoice::Create(_) => continue,
+        };
+        if matches!(choice, BranchChoice::Remote(_)) && !matches!(index.checked_sub(1).map(|before| &offer.choices[before]), Some(BranchChoice::Remote(_))) {
+            list = list.child(separator(k, Some("Only on a remote")));
+        }
+        let detail = one_line(detail).truncate_head().max_w(DETAIL_MAX_WIDTH).font(k.ty.text_small).color(k.c.text_faint);
+        // Picking only highlights, as the way to bring it in is still to choose.
+        list = list.child(picker_row(k, format!("merge{index}"), title, Some(detail), index == active, move |s, _| s.merger = Some(index)));
+    }
+    let list = if offer.choices.is_empty() { list.child(muted(k, "No other branches match").py(8.0)) } else { list };
+    let more = (offer.more > 0).then(|| muted(k, &format!("{} more, type to narrow them down", offer.more)).py(4.0));
+
+    let picked = s.merge_choice(active);
+    let (head, branch) = (&s.overview.head, picked.as_deref().unwrap_or("it"));
+    let ways = [(Integration::Merge, format!("Merge {branch} into {head}")), (Integration::Rebase, format!("Rebase {head} onto {branch}"))];
+    let group = ways.into_iter().fold(RadioGroup::new().label("How"), |group, (way, label)| group.item(RadioItem::new(label, s.integration == way).on_select(move |s: &mut State| s.integration = way)));
+    let pushed = (s.integration == Integration::Rebase && s.overview.upstream.is_some())
+        .then(|| text(format!("{head} is pushed already. Rebasing makes its commits again, so sending them takes Force push.")).font(k.ty.ui).color(k.c.warning.fg).wrap_anywhere());
+    let buttons = row()
+        .w_full()
+        .gap(8.0)
+        .items_center()
+        .child(one_line("Conflicts stop it, to settle in your editor".to_owned()).font(k.ty.text_small).color(k.c.text_faint))
+        .child(row().grow(1.0))
+        .child(Button::new("Cancel").variant(ButtonVariant::Ghost).on_press(State::close_merger).build(k))
+        .child(Button::new(s.integration.label()).disabled(!s.can_integrate() || picked.is_none()).on_press(move |s: &mut State| s.integrate(active)).build(k));
+    let on = text(format!("On {head}")).font(k.ty.ui).color(k.c.text_muted).wrap_anywhere();
+    col().w_full().px(16.0).pb(16.0).gap(12.0).child(on).child(field.build(k)).child(list.children(more)).child(group.build(k)).children(pushed).child(buttons)
+}
+
+/// Where the merge or rebase that stopped is, what holds it up, and the ways out.
+fn stopped(s: &State, k: &Kit, operation: &Operation) -> El {
+    let conflicted = s.overview.conflicted();
+    let said = match conflicted.len() {
+        0 => "No conflicts are left. Continue takes what is staged.".to_owned(),
+        n => format!("{} to settle in your editor, then stage.", plural(n, "conflicted file")),
+    };
+    let files = conflicted.iter().take(CONFLICTS_SHOWN).map(|path| one_line((*path).to_owned()).truncate_head().font(k.ty.mono).color(k.c.text_base).px(8.0));
+    let more = conflicted.len().checked_sub(CONFLICTS_SHOWN).filter(|more| *more > 0).map(|more| muted(k, &format!("and {more} more")));
+    let buttons = row()
+        .w_full()
+        .gap(8.0)
+        .justify_end()
+        .child(Button::new("Abort").variant(ButtonVariant::Ghost).disabled(s.running.is_some()).on_press(State::ask_to_abort).build(k))
+        .child(Button::new("Continue").disabled(!s.can_continue()).on_press(State::continue_operation).build(k));
+    col()
+        .key("stopped")
+        .w_full()
+        .px(16.0)
+        .pb(16.0)
+        .gap(8.0)
+        .child(text(underway(s, operation)).font(k.ty.ui_medium).color(k.c.text_base).wrap_anywhere())
+        .child(text(said).font(k.ty.ui).color(k.c.text_muted).wrap_anywhere())
+        .child(col().w_full().gap(2.0).children(files).children(more))
+        .child(buttons.pt(8.0))
 }
 
 /// The remotes, each with its URL, and a way to add one.

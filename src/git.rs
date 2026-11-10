@@ -137,6 +137,8 @@ fn run_in(dir: &Path, args: &[&str], ok_codes: &[i32]) -> Result<String> {
         .current_dir(dir)
         .env("GIT_OPTIONAL_LOCKS", "0")
         .env("GIT_TERMINAL_PROMPT", "0")
+        // Nobody could type into an editor, so git takes the message it would offer.
+        .env("GIT_EDITOR", "true")
         .stdin(Stdio::null())
         .output()
         .map_err(|e| GitError(format!("git {}: {e}", args.join(" "))))?;

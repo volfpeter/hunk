@@ -2,6 +2,7 @@
 //! and branch stand.
 
 use std::collections::HashMap;
+use std::fs;
 
 use crate::forge::Hosted;
 use crate::git::{Repo, Result};
@@ -33,6 +34,8 @@ pub enum Change {
     New,
     Changed,
     Deleted,
+    /// Both sides of a merge changed it, and nobody has settled how yet.
+    Conflicted,
 }
 
 impl Change {
@@ -45,6 +48,23 @@ impl Change {
             _ => Some(Change::Changed),
         }
     }
+}
+
+/// A merge or rebase that stopped before it finished, waiting to be continued or aborted.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Operation {
+    /// `branch` going into the current branch.
+    Merge { branch: String },
+    /// `branch` replayed onto `onto`, at commit `step` of `steps`.
+    Rebase { branch: String, onto: String, step: u32, steps: u32 },
+}
+
+/// The commit `HEAD` points at.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LastCommit {
+    pub hash: String,
+    pub parents: usize,
+    pub message: String,
 }
 
 /// What a commit takes: what is staged, or everything when nothing is.
@@ -123,6 +143,10 @@ pub struct Overview {
     pub upstream: Option<Upstream>,
     /// Where the repository is on the web: at the first remote URL with a host, `origin`'s first.
     pub hosted: Option<Hosted>,
+    pub operation: Option<Operation>,
+    pub last_commit: Option<LastCommit>,
+    /// The local branches holding commits `HEAD` lacks.
+    pub unmerged: Vec<String>,
 }
 
 impl Overview {
@@ -141,11 +165,21 @@ impl Overview {
             files: file_statuses(repo)?,
             staged_lines: staged_lines(repo)?,
             upstream: upstream(repo)?,
+            operation: operation(repo)?,
+            last_commit: last_commit(repo)?,
+            unmerged: unmerged(repo)?,
         })
     }
 
     pub fn staged_files(&self) -> usize {
         self.files.values().filter(|file| file.staged.is_some()).count()
+    }
+
+    /// The files waiting for a conflict to be settled, by path.
+    pub fn conflicted(&self) -> Vec<&str> {
+        let mut paths: Vec<&str> = self.files.iter().filter(|(_, status)| status.unstaged == Some(Change::Conflicted)).map(|(path, _)| path.as_str()).collect();
+        paths.sort_unstable();
+        paths
     }
 
     pub fn commit_plan(&self) -> CommitPlan {
@@ -154,7 +188,7 @@ impl Overview {
             let taken = if plan.takes_all { file.unstaged } else { file.staged };
             match taken {
                 Some(Change::New) => plan.new += 1,
-                Some(Change::Changed) => plan.changed += 1,
+                Some(Change::Changed | Change::Conflicted) => plan.changed += 1,
                 Some(Change::Deleted) => plan.deleted += 1,
                 None => plan.left_out += 1,
             }
@@ -284,6 +318,10 @@ fn file_statuses(repo: &Repo) -> Result<HashMap<String, FileStatus>> {
         .split_terminator('\0')
         .filter_map(|record| {
             let (index, worktree, path) = (record.get(0..1)?, record.get(1..2)?, record.get(3..)?);
+            // Nothing of a conflicted file is staged: its index holds each side apart.
+            if matches!(record.get(0..2)?, "DD" | "AU" | "UD" | "UA" | "DU" | "AA" | "UU") {
+                return Some((path.to_owned(), FileStatus { staged: None, unstaged: Some(Change::Conflicted) }));
+            }
             let staged = if index == "?" { None } else { Change::from_status(index) };
             Some((path.to_owned(), FileStatus { staged, unstaged: Change::from_status(worktree) }))
         })
@@ -310,6 +348,47 @@ fn upstream(repo: &Repo) -> Result<Option<Upstream>> {
     let counts = repo.run(&["rev-list", "--left-right", "--count", "@{upstream}...HEAD"])?;
     let mut counts = counts.split_whitespace().filter_map(|count| count.parse().ok());
     Ok(counts.next().zip(counts.next()).map(|(behind, ahead)| Upstream { ahead, behind }))
+}
+
+/// The merge or rebase waiting to go on. Rebases of the older apply backend aren't recognised.
+fn operation(repo: &Repo) -> Result<Option<Operation>> {
+    let read = |path: &str| fs::read_to_string(repo.git_dir().join(path)).ok().map(|text| text.trim().to_owned());
+    if let Some(merging) = read("MERGE_HEAD") {
+        return Ok(Some(Operation::Merge { branch: name_of(repo, &merging)? }));
+    }
+    let Some(head) = read("rebase-merge/head-name") else { return Ok(None) };
+    let onto = match read("rebase-merge/onto") {
+        Some(onto) => name_of(repo, &onto)?,
+        None => String::new(),
+    };
+    let count = |path: &str| read(path).and_then(|count| count.parse().ok()).unwrap_or(0);
+    let branch = head.strip_prefix("refs/heads/").unwrap_or(&head).to_owned();
+    Ok(Some(Operation::Rebase { branch, onto, step: count("rebase-merge/msgnum"), steps: count("rebase-merge/end") }))
+}
+
+/// What people call `commit`: a branch, local or a remote's, maybe some commits back, or else
+/// its short hash.
+fn name_of(repo: &Repo, commit: &str) -> Result<String> {
+    let name = repo.run(&["name-rev", "--name-only", "--always", "--refs=refs/heads/*", "--refs=refs/remotes/*", commit])?;
+    let name = name.trim();
+    Ok(name.strip_prefix("remotes/").unwrap_or(name).to_owned())
+}
+
+fn last_commit(repo: &Repo) -> Result<Option<LastCommit>> {
+    if repo.head_commit()?.is_none() {
+        return Ok(None);
+    }
+    let commit = repo.run(&["log", "-1", "--format=%H%x1f%P%x1f%B", "HEAD"])?;
+    let mut fields = commit.splitn(3, FIELD);
+    let (hash, parents, message) = (fields.next().unwrap_or_default(), fields.next().unwrap_or_default(), fields.next().unwrap_or_default());
+    Ok(Some(LastCommit { hash: hash.to_owned(), parents: parents.split_whitespace().count(), message: message.trim().to_owned() }))
+}
+
+fn unmerged(repo: &Repo) -> Result<Vec<String>> {
+    if repo.head_commit()?.is_none() {
+        return Ok(Vec::new());
+    }
+    Ok(repo.run(&["for-each-ref", "--no-merged=HEAD", "--format=%(refname:short)", "refs/heads"])?.lines().map(str::to_owned).collect())
 }
 
 #[cfg(test)]
@@ -449,6 +528,57 @@ mod tests {
         let ids: Vec<String> = overview.remote_branches.iter().map(RemoteBranch::id).collect();
         assert_eq!(ids, ["origin/user/feature"]);
         assert_eq!(overview.remote_branches[0].name, "user/feature");
+    }
+
+    /// `main` and `feature` changing the same line of `a.txt` apart, on `main`.
+    fn with_clashing_branches() -> Fixture {
+        let fixture = Fixture::new();
+        fixture.commit("a.txt", "one\n", "first");
+        fixture.git(&["checkout", "-q", "-b", "feature"]);
+        fixture.commit("a.txt", "feature\n", "feature");
+        fixture.commit("b.txt", "more\n", "more feature");
+        fixture.git(&["checkout", "-q", "main"]);
+        fixture.commit("a.txt", "main\n", "main");
+        fixture
+    }
+
+    #[test]
+    fn a_stopped_merge_shows_its_branch_and_conflicted_files_apart_from_what_is_staged() {
+        let fixture = with_clashing_branches();
+        assert!(fixture.repo.run(&["merge", "--no-edit", "feature"]).is_err());
+
+        let overview = Overview::load(&fixture.repo).unwrap();
+
+        assert_eq!(overview.operation, Some(Operation::Merge { branch: "feature".into() }));
+        assert_eq!(overview.conflicted(), ["a.txt"]);
+        assert_eq!(overview.files.get("b.txt").map(|file| file.staged), Some(Some(Change::New)));
+        assert_eq!(overview.staged_files(), 1);
+    }
+
+    #[test]
+    fn a_stopped_rebase_shows_both_branches_and_how_far_it_got() {
+        let fixture = with_clashing_branches();
+        fixture.git(&["checkout", "-q", "feature"]);
+        assert!(fixture.repo.run(&["rebase", "main"]).is_err());
+
+        let overview = Overview::load(&fixture.repo).unwrap();
+
+        assert_eq!(overview.operation, Some(Operation::Rebase { branch: "feature".into(), onto: "main".into(), step: 1, steps: 2 }));
+        assert_eq!(overview.conflicted(), ["a.txt"]);
+    }
+
+    #[test]
+    fn knows_the_last_commit_and_the_branches_it_lacks() {
+        let fixture = with_clashing_branches();
+        fixture.git(&["branch", "behind", "main~1"]);
+        fixture.repo.run(&["commit", "-q", "--allow-empty", "-m", "subject\n\nbody"]).unwrap();
+
+        let overview = Overview::load(&fixture.repo).unwrap();
+
+        let last = overview.last_commit.unwrap();
+        assert_eq!((last.hash.len(), last.parents, last.message.as_str()), (40, 1, "subject\n\nbody"));
+        assert_eq!(overview.unmerged, ["feature"]);
+        assert_eq!(overview.operation, None);
     }
 
     #[test]
