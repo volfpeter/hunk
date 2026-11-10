@@ -698,6 +698,20 @@ fn edit_by_word(edit: &mut TextEdit, event: &KeyEvent) -> bool {
     word.is_some()
 }
 
+/// Applies Ctrl+Backspace to `edit` as deleting the path segment before the caret, trailing
+/// slashes (either kind) included; returns whether `event` was it. A selection is left to the usual chord.
+fn edit_by_segment(edit: &mut TextEdit, event: &KeyEvent) -> bool {
+    let Mods { ctrl, cmd, shift, alt, .. } = event.mods;
+    let (start, end) = edit.range();
+    if event.key != Key::Backspace || !(ctrl && cmd) || shift || alt || start != end {
+        return false;
+    }
+    let before = edit.text[..end].trim_end_matches(['/', '\\']);
+    edit.set_selection(before.rfind(['/', '\\']).map_or(0, |slash| slash + 1), end);
+    edit.insert("");
+    true
+}
+
 /// The Alt chord for a Ctrl word chord. Rune reads Ctrl as Cmd off macOS, which takes the whole line.
 fn word_chord(event: &KeyEvent) -> Option<KeyEvent> {
     let Mods { ctrl, cmd, shift, .. } = event.mods;
@@ -934,6 +948,10 @@ fn open_dialog(s: &State, k: &Kit, overlays: &mut Vec<El>) {
             }
             Key::Tab => {
                 s.complete_path();
+                true
+            }
+            _ if edit_by_segment(&mut s.shell.open_text, event) => {
+                s.offer_folders();
                 true
             }
             _ => edit_by_word(&mut s.shell.open_text, event),
@@ -1179,6 +1197,23 @@ mod tests {
 
         assert!(multi_line_key(&mut state, &press(Mods { ctrl: true, cmd: true, ..Mods::default() }), text, save));
         assert_eq!((state.draft_text.text.as_str(), state.managing_remotes), ("one\n", true));
+    }
+
+    #[test]
+    fn ctrl_backspace_takes_one_path_segment() {
+        let press = KeyEvent { key: Key::Backspace, mods: Mods { ctrl: true, cmd: true, ..Mods::default() } };
+        let mut edit = TextEdit::new("~/dev/project/".to_owned());
+        edit.set_caret(edit.text.len());
+
+        assert!(edit_by_segment(&mut edit, &press));
+        assert_eq!(edit.text, "~/dev/");
+        assert!(edit_by_segment(&mut edit, &press));
+        assert_eq!(edit.text, "~/");
+
+        let mut edit = TextEdit::new("C:\\Users\\me".to_owned());
+        edit.set_caret(edit.text.len());
+        assert!(edit_by_segment(&mut edit, &press));
+        assert_eq!(edit.text, "C:\\Users\\");
     }
 
     #[test]
