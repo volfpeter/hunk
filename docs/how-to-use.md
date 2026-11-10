@@ -18,7 +18,7 @@ To update, `git pull` and run `./install.sh` again. `./install.sh --uninstall` r
 
 Open a folder that isn't in a repository, and it offers **Initialise repository**, which turns it into one.
 
-**Ctrl+O**, or clicking the repository's name in the top left, opens another repository. With nothing typed, it lists the ones you opened recently. Type a path, like `~/dev/`, to see the folders there, with repositories marked. A path without `/` or `~` at the start starts in your home folder. Use the arrow keys to pick, **Tab** to complete the picked folder and **Enter** to open it. Nothing can be opened while a Git action runs.
+**Ctrl+O**, or clicking the repository's name in the top left, opens another repository. With nothing typed, it lists the ones you opened recently. Type a path, like `~/dev/`, to see the folders there, with repositories marked. A path without `/` or `~` at the start starts in your home folder. Use the arrow keys to pick, **Tab** to complete the picked folder and **Enter** to open it, or **Ctrl+Enter** to open it in a new window, beside this one. A repository already open in a window isn't opened again: that window comes to the front. Nothing can be opened while a Git action runs.
 
 The name in the bar comes from the repository's `origin` remote, like `owner/project`, or from its folder when it has none.
 

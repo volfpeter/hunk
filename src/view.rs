@@ -6,7 +6,7 @@ use rune_kit::diff::{Annotation, DiffMode, DiffView, FoldRow};
 use rune_kit::{Badge, Button, ButtonVariant, ControlSize, Dialog, FileNode, IconButton, IconButtonVariant, Kit, RadioGroup, RadioItem, SegmentedControl, Spinner, TextArea, TextInput, Toast, ToastRegion, Tree, TreeItem, TreeModel, TreeStyle, root};
 
 use crate::action::{Action, Integration, Stashed};
-use crate::app::{APPLICATION, COMMENTS, COMMIT, COPY, Command, DRAFT_NOTE, KEYS, Kind, MERGE, PALETTE, PULL, PUSH, PullRequestOffer, State, copy_label};
+use crate::app::{APPLICATION, COMMENTS, COMMIT, COPY, Command, DRAFT_NOTE, KEYS, Kind, MERGE, PALETTE, PULL, PUSH, PullRequestOffer, State, Target, copy_label};
 use crate::comments::Comment;
 use crate::gh::{PullRequest, Status};
 use crate::open::{Choice, tilde};
@@ -1001,8 +1001,12 @@ fn open_dialog(s: &State, k: &Kit, overlays: &mut Vec<El>) {
         .label("Folder")
         .on_edit(|s: &mut State| &mut s.shell.open_text)
         .on_change(|s: &mut State, _: &mut Tx| s.offer_folders())
-        .on_submit(|s: &mut State, _: &mut Tx| s.open_choice(s.shell.opener.unwrap_or_default()))
+        .on_submit(|s: &mut State, _: &mut Tx| s.open_choice(s.shell.opener.unwrap_or_default(), Target::ThisWindow))
         .on_key(|s: &mut State, event: &KeyEvent, _: &mut Tx| match event.key {
+            Key::Enter if event.mods.cmd => {
+                s.open_choice(s.shell.opener.unwrap_or_default(), Target::NewWindow);
+                true
+            }
             Key::Up => {
                 s.move_opener(-1);
                 true
@@ -1032,7 +1036,7 @@ fn open_dialog(s: &State, k: &Kit, overlays: &mut Vec<El>) {
     };
     let list = if offer.choices.is_empty() && !s.offer_pending() { list.child(muted(k, none).py(8.0)) } else { list };
     let more = (offer.more > 0).then(|| muted(k, &format!("{} more, type to narrow them down", offer.more)).py(4.0));
-    let hint = text("Tab completes the folder, Enter opens it").font(k.ty.text_small).color(k.c.text_faint).px(8.0);
+    let hint = text("Tab completes the folder, Enter opens it, Ctrl+Enter in a new window").font(k.ty.text_small).color(k.c.text_faint).px(8.0);
     let content = col().w_full().px(16.0).pb(16.0).gap(12.0).child(field.build(k)).child(list.children(more)).child(hint);
     Dialog::new("open", "Open a repository").width(PICKER_WIDTH).fit().open(true).on_close(State::close_opener).child(content).build(k, overlays);
     pin_to_top(overlays);
@@ -1308,7 +1312,7 @@ fn palette_row(k: &Kit, command: &Command, active: bool, index: usize) -> El {
 /// A folder in the open dialog, with where it is or whether it is a repository.
 fn choice_row(k: &Kit, choice: &Choice, active: bool, index: usize) -> El {
     let detail = (!choice.detail.is_empty()).then(|| one_line(choice.detail.clone()).truncate_head().max_w(PLACE_MAX_WIDTH).font(k.ty.text_small).color(k.c.text_faint));
-    picker_row(k, format!("folder{index}"), choice.name.clone(), detail, active, move |s, _| s.open_choice(index))
+    picker_row(k, format!("folder{index}"), choice.name.clone(), detail, active, move |s, _| s.open_choice(index, Target::ThisWindow))
 }
 
 /// A row of a dialog's list, `trailing` at its end. The highlighted one is marked, as Enter

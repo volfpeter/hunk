@@ -16,20 +16,20 @@ mod snippet;
 mod switcher;
 mod view;
 mod watch;
+mod windows;
 
+use std::cell::RefCell;
 use std::path::Path;
 use std::process::ExitCode;
+use std::rc::Rc;
 
-use rune::{App, AppSpec};
-
-use app::{Shell, State};
 use open::Opened;
 use recent::Recents;
 use settings::Settings;
+use windows::Shared;
 
 const NAME: &str = "hunk";
 const APP_ID: &str = "io.github.volfpeter.hunk";
-const WINDOW_SIZE: (f32, f32) = (1500.0, 950.0);
 
 /// Starts on the folder passed, else the last repository if it is still one, else nothing. The
 /// folder the app runs in doesn't count, so a launcher and a terminal start alike.
@@ -49,15 +49,8 @@ fn main() -> ExitCode {
             return ExitCode::from(2);
         }
     };
-    let spec = AppSpec {
-        setup: Some(State::setup),
-        poll: Some(State::poll),
-        on_key: Some(State::on_key),
-        families: ("Inter", "ui-monospace, Inter"),
-        ..AppSpec::new(NAME, WINDOW_SIZE, || unreachable!("App::init builds the state"), view::view)
-    };
     rune::set_app_id(APP_ID);
-    let shell = Shell::new(recents, Settings::load());
-    App::new(spec).init(move || State::new(opened, shell)).on_focus(State::on_focus).modifier_keys().run();
+    let shared = Rc::new(RefCell::new(Shared::new(recents, Settings::load())));
+    windows::first(opened, &shared).run();
     ExitCode::SUCCESS
 }

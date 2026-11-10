@@ -33,6 +33,14 @@ impl Opened {
         })
     }
 
+    /// The root of the repository found, if any.
+    pub fn root(&self) -> Option<&Path> {
+        match self {
+            Opened::Repository(repo, _) => Some(repo.root()),
+            Opened::Folder(_) => None,
+        }
+    }
+
     /// Makes `folder` a repository, and opens it.
     pub fn init(folder: &Path) -> Result<Opened, String> {
         git::init(folder).map_err(|error| error.to_string())?;

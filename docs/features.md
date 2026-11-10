@@ -16,6 +16,8 @@ Everything the app does, to try at your own pace. A tick means Peter tried it an
 - [ ] Ctrl+O, or the repository's name in the bar, opens a repository
 - [ ] The open dialog lists recent repositories, newest first, without those that are gone
 - [ ] Typing a path completes folders, marking repositories; Tab completes, Enter opens
+- [ ] Ctrl+Enter in the open dialog opens the repository in a new window
+- [ ] Opening a repository another window shows brings that window to the front
 - [ ] Switching repositories starts afresh
 - [ ] The bar names the repository `owner/project` after its remote, or its folder
 

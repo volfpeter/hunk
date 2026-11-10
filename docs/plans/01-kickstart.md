@@ -329,6 +329,17 @@ Tasks:
 - [x] Delete a branch, after a confirm
 - [x] Force push, with a lease, after a confirm
 
+### DONE - Step 4k: Several windows
+
+Several repositories side by side, one per window, as Zed does: Enter in the open dialog opens in this window, Ctrl+Enter in a new one, and a repository another window shows comes to the front instead of opening twice. One repository never has two windows, so its review state under `<git-dir>/hunk/` keeps a single writer. Worktrees are separate repositories here, each with its own root and git dir. Starting `hunk <folder>` while the app runs still starts a second process: one instance needs talking between processes, skipped until it hurts.
+
+Built: each window is its own `State`, from `rune::open_window`. The recents, the settings and which window shows which repository are shared on the UI thread, in an `Rc<RefCell<…>>`, so every window saves the same settings. A window notes its repository when it is built and when it opens another, and leaves the list as it closes. Coming to the front uses the window's `AppHandle::focus`, which on Wayland only requests attention: whether the window rises is the compositor's call. Headless runs open no second window, so check those by hand.
+
+Tasks:
+
+- [x] Open a repository in a new window with Ctrl+Enter in the open dialog
+- [x] Bring the window showing a repository to the front instead of opening it twice
+
 ### Step 5: UI refinements
 
 Peter dislikes the always-visible top panel. A left sidebar is doubtful too, because side-by-side diffs need the width, so moving the panel to the side is unlikely to be the fix. lazygit's layout is not a reference.
