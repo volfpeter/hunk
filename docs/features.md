@@ -18,6 +18,7 @@ Everything the app does, to try at your own pace. A tick means Peter tried it an
 - [ ] Typing a path completes folders, marking repositories; Tab completes, Enter opens
 - [ ] Ctrl+Enter in the open dialog opens the repository in a new window
 - [ ] Opening a repository another window shows brings that window to the front
+- [ ] The window's title is the open folder's name, or `hunk` with nothing open
 - [ ] Switching repositories starts afresh
 - [ ] The bar names the repository `owner/project` after its remote, or its folder
 

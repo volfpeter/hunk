@@ -3,7 +3,7 @@
 use std::collections::HashMap;
 use std::cell::RefCell;
 use std::mem;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::time::Duration;
 
@@ -406,6 +406,7 @@ impl State {
                     Target::ThisWindow => {
                         // What else landed was about the repository it replaces.
                         self.show_opened(opened);
+                        tx.set_title(self.title());
                         return true;
                     }
                 }
@@ -505,6 +506,12 @@ impl State {
     /// `<user-or-org>/<project>` when a remote says, else the name of the worktree's folder.
     pub fn repo_name(&self) -> String {
         self.overview.hosted.as_ref().map(Hosted::name).or_else(|| self.repo.as_ref().map(Repo::name)).unwrap_or_default()
+    }
+
+    /// The window's title: the name of the folder on screen, else the app's.
+    pub fn title(&self) -> String {
+        let folder = self.not_repository.as_deref().and_then(Path::file_name).map(|name| name.to_string_lossy().into_owned());
+        self.repo.as_ref().map(Repo::name).or(folder).unwrap_or_else(|| crate::NAME.to_owned())
     }
 
     /// Whether another repository can be opened: not while an action runs, whose outcome would

@@ -339,6 +339,7 @@ Tasks:
 
 - [x] Open a repository in a new window with Ctrl+Enter in the open dialog
 - [x] Bring the window showing a repository to the front instead of opening it twice
+- [x] Title each window after its folder, as Zed does: not the remote's name, which worktrees of one repository share and the bar already shows
 
 ### Step 5: UI refinements
 
