@@ -6,7 +6,7 @@ use rune_kit::diff::{Annotation, DiffMode, DiffView, FoldRow};
 use rune_kit::{Badge, Button, ButtonVariant, ControlSize, Dialog, FileNode, IconButton, IconButtonVariant, Kit, RadioGroup, RadioItem, SegmentedControl, Spinner, TextArea, TextInput, Toast, ToastRegion, Tree, TreeItem, TreeModel, TreeStyle, root};
 
 use crate::action::{Action, Integration, Stashed};
-use crate::app::{APPLICATION, COMMENTS, COMMIT, COPY, Command, DRAFT_NOTE, KEYS, Kind, MERGE, PALETTE, PULL, PUSH, PullRequestOffer, State, Target, copy_label};
+use crate::app::{APPLICATION, COMMENTS, COMMIT, COPY, Command, DRAFT_NOTE, KEYS, Kind, MERGE, PALETTE, PULL, PULL_REQUEST, PUSH, PullRequestOffer, State, Target, copy_label};
 use crate::comments::{Comment, Group};
 use crate::gh::{PullRequest, Status};
 use crate::open::{Choice, tilde};
@@ -366,7 +366,7 @@ fn head_pull_request(k: &Kit, found: &PullRequest) -> El {
         Status::Closed => &CLOSED_PULL_REQUEST_ICON,
     };
     let help = format!("Pull request #{} ({}): {}", found.number, found.status.label(), found.title);
-    let button = BarButton::new(glyph, help).count(Some(format!("#{}", found.number))).muted(found.status != Status::Open);
+    let button = BarButton::new(glyph, help).count(Some(format!("#{}", found.number))).shortcut(PULL_REQUEST).muted(found.status != Status::Open);
     button.build(k, |s, tx| s.open_head_pull_request(tx)).key("head-pull-request")
 }
 

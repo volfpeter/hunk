@@ -38,26 +38,10 @@ pub struct Loaded {
 }
 
 impl Review {
-    /// What the local branch `branch` added since it left the branch it most likely grew from:
-    /// of the other local branches and `fallback`, the one it has the fewest commits beyond. Ties
-    /// go to `fallback`, then to the branch fewest commits ahead. Branches that grew from
-    /// `branch` don't count.
+    /// What the local branch `branch` added since it left the branch it most likely grew from,
+    /// as [`parent_branch`] finds it.
     pub fn of_branch(repo: &Repo, branch: &str, fallback: &str) -> Result<Review> {
-        let tip = format!("refs/heads/{branch}");
-        let counts = repo.run(&["rev-list", "--left-right", "--count", &format!("{fallback}...{tip}")])?;
-        let fallback_counts = ahead_and_beyond(&counts).ok_or_else(|| GitError::new(format!("unexpected rev-list output: {counts}")))?;
-        let format = format!("--format=%(refname:short)%1f%(ahead-behind:{tip})");
-        let refs = repo.run(&["for-each-ref", &format, "refs/heads"])?;
-        let others = refs.lines().filter_map(|line| {
-            let (name, counts) = line.split_once(FIELD)?;
-            let (ahead, beyond) = ahead_and_beyond(counts)?;
-            let grew_from_branch = beyond == 0 && ahead > 0;
-            (name != branch && !grew_from_branch).then_some((beyond, true, ahead, name))
-        });
-        let (fallback_ahead, fallback_beyond) = fallback_counts;
-        let candidates = others.chain([(fallback_beyond, false, fallback_ahead, fallback)]);
-        let (_, _, _, base) = candidates.min().expect("the fallback is always a candidate");
-        Ok(Review::Branch { base: base.to_owned(), branch: branch.to_owned() })
+        Ok(Review::Branch { base: parent_branch(repo, branch, fallback)?, branch: branch.to_owned() })
     }
 
     /// The two points being compared, for people, the older first.
@@ -119,6 +103,27 @@ impl Review {
             Review::Stash(stash) => repo.run(&["stash", "show", "--no-ext-diff", WHOLE_FILE, "--patch", "--include-untracked", &stash_commit(repo, stash)?]),
         }
     }
+}
+
+/// The branch the local branch `branch` most likely grew from: of the other local branches and
+/// `fallback`, the one it has the fewest commits beyond. Ties go to `fallback`, then to the
+/// branch fewest commits ahead. Branches that grew from `branch` don't count.
+pub fn parent_branch(repo: &Repo, branch: &str, fallback: &str) -> Result<String> {
+    let tip = format!("refs/heads/{branch}");
+    let counts = repo.run(&["rev-list", "--left-right", "--count", &format!("{fallback}...{tip}")])?;
+    let fallback_counts = ahead_and_beyond(&counts).ok_or_else(|| GitError::new(format!("unexpected rev-list output: {counts}")))?;
+    let format = format!("--format=%(refname:short)%1f%(ahead-behind:{tip})");
+    let refs = repo.run(&["for-each-ref", &format, "refs/heads"])?;
+    let others = refs.lines().filter_map(|line| {
+        let (name, counts) = line.split_once(FIELD)?;
+        let (ahead, beyond) = ahead_and_beyond(counts)?;
+        let grew_from_branch = beyond == 0 && ahead > 0;
+        (name != branch && !grew_from_branch).then_some((beyond, true, ahead, name))
+    });
+    let (fallback_ahead, fallback_beyond) = fallback_counts;
+    let candidates = others.chain([(fallback_beyond, false, fallback_ahead, fallback)]);
+    let (_, _, _, base) = candidates.min().expect("the fallback is always a candidate");
+    Ok(base.to_owned())
 }
 
 /// Commits another point has that a branch lacks, and the other way round, from two counts.

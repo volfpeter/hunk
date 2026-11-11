@@ -146,6 +146,8 @@ Everything the app does, to try at your own pace. A tick means Peter tried it an
 - [ ] The bar shows the current branch's pull request left of Commit: an icon and its number, the title and status in its tooltip
 - [ ] Its icon shows whether it is open, a draft, merged or closed, and only an open one is bright
 - [ ] Click it to open the pull request in the browser
+- [ ] Ctrl+Shift+R, or the palette, opens the current branch's pull request from any view, or the forge's form for a new one
+- [ ] Creating one pushes the branch first when the forge lacks it or some of its commits, then opens the form
 - [ ] Coming back to the window looks for pull requests again, so one created or merged in the browser shows
 - [ ] Refresh from the palette, or a fetch, looks for pull requests again
 

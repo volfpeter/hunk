@@ -19,7 +19,7 @@ use crate::gh::{self, PullRequest};
 use crate::git::{Repo, Result};
 use crate::open::{Choice, Offer, Opened, resolve};
 use crate::overview::{Change, Entry, FileStatus, LastCommit, LineCounts, Operation, Overview};
-use crate::review::{Loaded, Review, files};
+use crate::review::{Loaded, Review, files, parent_branch};
 use crate::snippet::Snippet;
 use crate::switcher::{BranchChoice, BranchOffer};
 use crate::watch::RepoWatch;
@@ -178,6 +178,7 @@ pub const PUSH: &str = "Ctrl+Shift+↑";
 const FETCH: &str = "Ctrl+Shift+F";
 pub const COPY: &str = "Ctrl+Shift+C";
 pub const MERGE: &str = "Ctrl+Shift+M";
+pub const PULL_REQUEST: &str = "Ctrl+Shift+R";
 /// The key of each view of the repository, in the order of `Kind::ALL`.
 const VIEWS: [&str; 5] = ["Ctrl+1", "Ctrl+2", "Ctrl+3", "Ctrl+4", "Ctrl+5"];
 pub const COMMENTS: &str = "Ctrl+0";
@@ -195,6 +196,7 @@ fn command_shortcut(event: &KeyEvent) -> Option<&'static str> {
         _ if ctrl_shift && event.is_command('s') => Some(STASH),
         _ if ctrl_shift && event.is_command('f') => Some(FETCH),
         _ if ctrl_shift && event.is_command('m') => Some(MERGE),
+        _ if ctrl_shift && event.is_command('r') => Some(PULL_REQUEST),
         _ if event.is_command('0') => Some(COMMENTS),
         _ if event.is_command('\\') => Some(LAYOUT),
         _ => None,
@@ -313,6 +315,10 @@ pub struct State {
     /// What GitHub said about each branch's pull request, when last asked.
     pull_requests: HashMap<ForgeBranch, Found>,
     pull_request_load: Latest<Vec<(ForgeBranch, Found)>>,
+    /// Whether the forge's form for the current branch's pull request opens once it is pushed.
+    creating_pull_request: bool,
+    /// The branch the current one grew from, the base of its new pull request.
+    head_parent_load: Latest<(ForgeBranch, Result<String>)>,
     watch: Option<RepoWatch>,
     pub shell: Shell,
 }
@@ -382,6 +388,8 @@ impl State {
             action_load: Latest::default(),
             pull_requests: HashMap::new(),
             pull_request_load: Latest::default(),
+            creating_pull_request: false,
+            head_parent_load: Latest::default(),
             watch: None,
             shell,
         };
@@ -423,8 +431,9 @@ impl State {
         let comments = self.comments.poll();
         let action = self.action_load.take();
         let pull_requests = self.pull_request_load.take();
+        let head_parent = self.head_parent_load.take();
         let (repo_changed, watch_failure) = self.watch.as_ref().map_or((false, None), RepoWatch::take);
-        let landed = opened_landed || offer.is_some() || overview.is_some() || patch.is_some() || comments || action.is_some() || pull_requests.is_some() || watch_failure.is_some();
+        let landed = opened_landed || offer.is_some() || overview.is_some() || patch.is_some() || comments || action.is_some() || pull_requests.is_some() || head_parent.is_some() || watch_failure.is_some();
         self.pull_requests.extend(pull_requests.into_iter().flatten());
         if let Some(offer) = offer {
             self.show_offer(offer);
@@ -437,6 +446,12 @@ impl State {
         }
         if let Some((action, result)) = action {
             self.finish_action(&action, result);
+        }
+        if let Some(((hosted, branch), parent)) = head_parent {
+            match parent {
+                Ok(parent) => self.open_in_browser(&hosted.compare_url(self.overview.forge_branch(&parent), &branch), tx),
+                Err(error) => self.action_failure = Some(ActionFailure { action: "Create pull request", message: error.to_string() }),
+            }
         }
         // After the action, so what it did starts its time now.
         let copied_ended = self.copied.step(clock, tx);
@@ -1298,12 +1313,17 @@ impl State {
         Some(((hosted, branch.clone()), self.overview.forge_branch(base)))
     }
 
-    /// The current branch on GitHub, unless it is the default branch.
-    fn head_on_github(&self) -> Option<ForgeBranch> {
-        let hosted = self.overview.hosted.clone().filter(Hosted::is_github)?;
+    /// The current branch on its forge, unless it is the default branch.
+    fn head_on_forge(&self) -> Option<ForgeBranch> {
+        let hosted = self.overview.hosted.clone()?;
         let head = &self.overview.head;
         let feature = *head != self.overview.base && self.overview.branches.iter().any(|branch| branch.id == *head);
         feature.then(|| (hosted, head.clone()))
+    }
+
+    /// The current branch on GitHub, unless it is the default branch.
+    fn head_on_github(&self) -> Option<ForgeBranch> {
+        self.head_on_forge().filter(|(hosted, _)| hosted.is_github())
     }
 
     /// Asks GitHub for the pull requests of the current branch and of the branch on screen: those
@@ -1358,11 +1378,33 @@ impl State {
         self.open_in_browser(&url, tx);
     }
 
-    /// Opens the current branch's pull request in the browser.
+    /// Opens the current branch's pull request in the browser, or else the forge's form for one,
+    /// pushing first what the forge doesn't have yet.
     pub fn open_head_pull_request(&mut self, tx: &mut Tx) {
         if let Some(url) = self.head_pull_request().map(|found| found.url.clone()) {
             self.open_in_browser(&url, tx);
+            return;
         }
+        if self.head_on_forge().is_none() || self.running.is_some() {
+            return;
+        }
+        if self.overview.upstream.is_none_or(|upstream| upstream.ahead > 0) {
+            self.creating_pull_request = true;
+            self.run(Action::Push);
+        } else {
+            self.find_head_parent();
+        }
+    }
+
+    /// Looks for the branch the current one grew from, in the background, to open the forge's
+    /// form for a pull request into it.
+    fn find_head_parent(&mut self) {
+        let Some((repo, branch)) = self.repo.clone().zip(self.head_on_forge()) else { return };
+        let fallback = self.overview.base.clone();
+        self.head_parent_load.request((repo, branch, fallback), |(repo, branch, fallback)| {
+            let parent = parent_branch(&repo, &branch.1, &fallback);
+            (branch, parent)
+        });
     }
 
     fn open_in_browser(&mut self, url: &str, tx: &mut Tx) {
@@ -1473,9 +1515,11 @@ impl State {
 
     fn finish_action(&mut self, action: &Action, result: Result<()>) {
         self.running = None;
+        let creating_pull_request = mem::take(&mut self.creating_pull_request);
         match result {
             Ok(()) => {
                 match action {
+                    Action::Push if creating_pull_request => self.find_head_parent(),
                     Action::Commit(_) | Action::CommitAll(_) => self.commit_text = TextEdit::default(),
                     // A message written since stays.
                     Action::UndoCommit { message, .. } if self.commit_text.text.trim().is_empty() => self.commit_text = TextEdit::new(message.clone()),
@@ -1550,13 +1594,17 @@ impl State {
             PullRequestOffer::Existing(found) => format!("Open pull request #{}", found.number),
             PullRequestOffer::New { .. } => format!("Create pull request for {branch}"),
         });
-        let head = self.head_pull_request().map(|found| format!("Open pull request #{}", found.number)).filter(|label| shown.as_ref() != Some(label));
-        if let Some(label) = shown {
+        let head = self.head_on_forge().map(|(_, branch)| match self.head_pull_request() {
+            Some(found) => format!("Open pull request #{}", found.number),
+            None => format!("Create pull request for {branch}"),
+        });
+        // The current branch's command pushes first, so it stands for both.
+        if let Some(label) = shown.filter(|label| head.as_ref() != Some(label)) {
             offer(true, Command::new("Git", label, State::open_pull_request));
         }
-        if let Some(label) = head {
-            offer(true, Command::new("Git", label, State::open_head_pull_request));
-        }
+        let head_available = head.is_some() && (idle || self.head_pull_request().is_some());
+        let head = head.unwrap_or_else(|| "Open or create pull request".to_owned());
+        offer(head_available, Command::new("Git", head, State::open_head_pull_request).shortcut(PULL_REQUEST));
         offer(true, Command::new("Git", "Switch branch", |s, _| s.open_switcher()).shortcut("Ctrl+B").alias("Ctrl+Shift+B"));
         offer(self.can_fetch(), Command::new("Git", "Fetch", |s, _| s.run(Action::Fetch)).shortcut(FETCH));
         offer(idle, Command::new("Git", "Pull", |s, _| s.run(Action::Pull)).shortcut(PULL));
@@ -1629,6 +1677,7 @@ impl State {
         self.patch_load.set_waker(waker.clone());
         self.action_load.set_waker(waker.clone());
         self.pull_request_load.set_waker(waker.clone());
+        self.head_parent_load.set_waker(waker.clone());
         self.comments.set_waker(waker.clone());
         self.watch = Some(RepoWatch::start(repo, waker));
         self.refresh();

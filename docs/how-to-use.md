@@ -125,6 +125,8 @@ In **Branches**, a branch on GitHub shows its pull request beside **Check out**:
 
 The branch you're on shows its pull request in the bar too, left of **Commit**: its number, with the title and status in the tooltip. Its icon says where it stands: open, draft (a dashed line), merged (two lines joined) or closed (crossed out). Only an open one is bright. Click it to open it.
 
+**Ctrl+Shift+R**, from any view, opens the pull request of the branch you're on, or the forge's form for a new one. Before the form, it pushes the branch if the forge doesn't have it or some of its commits yet. It does nothing on the default branch.
+
 The pull request goes to the repository named in the bar: the one `origin` points at. The [command palette](#commands) has the same, under **Git**. The app asks GitHub again when you come back to its window, so a pull request you just created or merged in the browser shows then. **Git: Refresh** in the palette and a fetch ask again too.
 
 ## Switch branches

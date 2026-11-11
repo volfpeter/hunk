@@ -243,7 +243,7 @@ Hotkeys go in before the layout is reworked, so the keys are assigned once and t
 Decided, so a new key can be guessed from its kind:
 
 - **Ctrl+key opens a picker or switcher**, changing nothing until you pick: K the palette, O a repository, B the branches (step 4d), H the keys (step 4h), later P a file in the diff. Ctrl+digit goes to a page: 1 to 5 the reviews in the bar's order, 0 the comments page.
-- **Ctrl+Shift+key runs a git operation**: S stash, ↓ pull, ↑ push, B branches as an alias of Ctrl+B, F fetch (step 4d). Ctrl+Shift+P stays free: it was the palette's alias, and a VS Code habit shouldn't land on a git operation. C copies the open comments, the one exception: Commit lost it as an alias in step 4h, since Ctrl+Enter is its key.
+- **Ctrl+Shift+key runs a git operation**: S stash, ↓ pull, ↑ push, B branches as an alias of Ctrl+B, F fetch (step 4d), R the current branch's pull request. Ctrl+Shift+P stays free: it was the palette's alias, and a VS Code habit shouldn't land on a git operation. C copies the open comments, the one exception: Commit lost it as an alias in step 4h, since Ctrl+Enter is its key.
 - **Ctrl+\\ switches the diff between unified and split**, VS Code's key for splitting an editor.
 - **Ctrl+Enter confirms a dialog**, and with none open starts a commit.
 - **Bare keys act on what has focus**: moving through the diff, and `s` / `u` to stage and unstage.
@@ -351,12 +351,15 @@ A first step is done: the panel and the diff are sheets on a darker page, and th
 
 The comments page has a thin sheet of its own above the diff: each status's count with icon buttons acting on all its comments, so a delete needs no qualifier. Resolve all takes outdated comments too, since an agent's fix usually rewrites the commented lines, leaving them outdated; resolving only the open ones would resolve what the agent didn't touch. Delete outdated spares resolved comments, whose code isn't looked for. Delete all is palette-only, being rare and destructive. Every delete confirms with a count.
 
+The current branch's pull request has a command and a key (Ctrl+Shift+R) in every view, not only in Branches with the branch selected: open it if one is known, else open the forge's form. Creating pushes first whenever the branch has no upstream or commits it lacks, as the form shows only what the forge has; a failed push stops there. The base is the branch's parent, found as the Branches review finds it, on a worker. On GitHub, before `gh` has answered, it offers to create; GitHub's form then points to the existing one. In Branches with the current branch selected, the palette offers only this command, as it does more than the selected branch's.
+
 Tasks:
 
 - [ ] Rework the top panel: a clear purpose in every review, and clear separation from the diff (the bar also overflows narrow windows, which hides Pull and Push; step 4f's icons and counts made it fit 900 points)
 - [ ] Stop new files wasting half of the split view (may need a Rune issue)
 - [ ] Decide what picking the default branch should show (it's empty today)
 - [x] Act on many comments at once: resolve all, delete outdated, delete resolved, delete all
+- [x] Open or create the current branch's pull request from any view, with a key, pushing first
 
 ### Step 6: Code overlay
 
