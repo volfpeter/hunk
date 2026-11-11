@@ -203,9 +203,9 @@ impl Comment {
 }
 
 /// `comments` as one prompt: a block per comment, each saying where it points, quoting the code
-/// and giving the comment.
+/// and giving the comment, with a rule between blocks.
 pub fn prompt(comments: &[&Comment]) -> String {
-    comments.iter().map(|comment| prompt_block(comment)).collect::<Vec<_>>().join("\n")
+    comments.iter().map(|comment| prompt_block(comment)).collect::<Vec<_>>().join("\n---\n\n")
 }
 
 fn prompt_block(comment: &Comment) -> String {
@@ -224,7 +224,7 @@ fn prompt_block(comment: &Comment) -> String {
     labels.push(&location);
     let quote = anchor.lines.iter().flat_map(|lines| &lines.quoted).map(|line| format!("> {line}").trim_end().to_owned()).collect::<Vec<_>>();
     let quote = if quote.is_empty() { String::new() } else { format!("{}\n\n", quote.join("\n")) };
-    format!("{}\n\n{quote}{}\n\n---\n", labels.join(" "), comment.body)
+    format!("{}\n\n{quote}{}\n", labels.join(" "), comment.body)
 }
 
 #[derive(Serialize, Deserialize)]
@@ -550,8 +550,6 @@ Why remove this?
 > gone
 
 Was this right?
-
----
 ";
         assert_eq!(prompt(&[&whole, &removed, &outdated]), expected);
     }
