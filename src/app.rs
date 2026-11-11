@@ -454,6 +454,9 @@ impl State {
     }
 
     pub fn on_key(&mut self, event: &KeyEvent, tx: &mut Tx) -> bool {
+        if self.confirm_by_key(event) {
+            return true;
+        }
         if let Some(shortcut) = command_shortcut(event) {
             if !self.dialog_open() && self.palette.is_none() {
                 self.run_shortcut(shortcut, tx);
@@ -809,6 +812,23 @@ impl State {
 
     pub fn cancel_delete(&mut self) {
         self.deleting = None;
+    }
+
+    /// Goes ahead with the open confirm dialog on Ctrl+Enter; returns whether it did.
+    pub fn confirm_by_key(&mut self, event: &KeyEvent) -> bool {
+        if event.key != Key::Enter || !event.mods.cmd {
+            return false;
+        }
+        if self.deleting.is_some() {
+            self.confirm_delete();
+        } else if self.deleting_group.is_some() {
+            self.confirm_delete_group();
+        } else if self.confirming.is_some() {
+            self.confirm_action();
+        } else {
+            return false;
+        }
+        true
     }
 
     pub fn resolve_all_comments(&mut self) {
@@ -2214,13 +2234,24 @@ mod tests {
         assert!(!state.committing, "nothing to commit");
 
         state.overview.files.insert("a.txt".into(), status(false, true));
-        state.confirming = Some(Action::DropStash("abc".into()));
+        state.open_remotes();
         state.on_key(&ctrl(Key::Enter, false), &mut Tx::default());
         assert!(!state.committing, "a dialog is open");
 
-        state.cancel_action();
+        state.close_remotes();
         state.on_key(&ctrl(Key::Enter, false), &mut Tx::default());
         assert!(state.committing);
+    }
+
+    #[test]
+    fn ctrl_enter_goes_ahead_with_a_confirm_dialog_rather_than_committing() {
+        let (_fixture, mut state) = state();
+        let ctrl_enter = KeyEvent { key: Key::Enter, mods: rune::Mods { ctrl: true, cmd: true, ..rune::Mods::default() } };
+        state.overview.files.insert("a.txt".into(), status(false, true));
+        state.ask_to_delete_group(Group::All);
+
+        state.on_key(&ctrl_enter, &mut Tx::default());
+        assert!(state.deleting_group.is_none() && !state.committing);
     }
 
     #[test]

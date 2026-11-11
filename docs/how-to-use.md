@@ -153,6 +153,6 @@ They use your own Git setup, but can't answer prompts: if Git needs a password i
 
 The list also moves through the diff, switches to another view and opens another repository. A command with a key shows it, to use without the list: **]** and **[** go to the next and previous file, **j** and **k** to the next and previous change.
 
-Keys follow a pattern: **Ctrl** with a letter opens something to pick from, like **Ctrl+K**, **Ctrl+O** and **Ctrl+B**, and **Ctrl+Shift** with a letter or arrow runs a Git operation, or copies the open comments with **Ctrl+Shift+C**. **Ctrl+1** to **Ctrl+5** switch to the views in the bar's order, and **Ctrl+0** opens the comments page.
+Keys follow a pattern: **Ctrl** with a letter opens something to pick from, like **Ctrl+K**, **Ctrl+O** and **Ctrl+B**, and **Ctrl+Shift** with a letter or arrow runs a Git operation, or copies the open comments with **Ctrl+Shift+C**. **Ctrl+1** to **Ctrl+5** switch to the views in the bar's order, and **Ctrl+0** opens the comments page. In a dialog asking to confirm, **Ctrl+Enter** goes ahead.
 
 **Ctrl+H**, or the question mark at the far right of the bar, lists every keyboard shortcut, grouped as the palette groups its commands, with a second key where a command has one. It lists them all, including those that do nothing right now, like Push with nothing to send. **Ctrl+H** again, or **Escape**, closes it.

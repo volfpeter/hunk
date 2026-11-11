@@ -28,7 +28,7 @@ Check with a long string without spaces, in a narrow window.
 
 ## Dialogs
 
-- A dialog opens focused on its close button, so Enter dismisses it.
+- A dialog opens focused on its close button, so Enter dismisses it. A focused button takes plain Enter only: Ctrl+Enter goes on to the window's `on_key`.
 - Short dialogs need `.fit()`, or they stay at the standard height.
 - A fitted dialog taller than the window runs off both ends, title and close button included. Keep it short, or scroll its body.
 - `Dialog` always centres its panel. To place it elsewhere, re-align the layer it pushes last, as the palette does.

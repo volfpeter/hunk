@@ -158,6 +158,7 @@ Everything the app does, to try at your own pace. A tick means Peter tried it an
 - [ ] Next and previous file and hunk from the palette, showing their keys
 - [ ] The palette's highlighted command stands out, marked with ›
 - [ ] Ctrl+Enter commits, Ctrl+Shift+S stashes, Ctrl+Shift+↓ pulls, Ctrl+Shift+↑ pushes
+- [ ] Ctrl+Enter goes ahead in a confirm dialog (delete, discard, drop, force push…), wherever focus is in it
 - [ ] The palette shows those keys
 - [ ] Switch to any other view from the palette
 - [ ] Open a repository from the palette
