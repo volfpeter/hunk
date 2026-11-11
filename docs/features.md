@@ -65,6 +65,10 @@ Everything the app does, to try at your own pace. A tick means Peter tried it an
 - [ ] Edit, delete, resolve and reopen, in the diff and on the page
 - [ ] Copy one comment, outdated or not, from its entry
 - [ ] Copy every open comment that isn't outdated, from the page or the palette, its label counting them
+- [ ] The page's top row counts open, outdated and resolved comments, each with icon buttons acting on all of them
+- [ ] Resolve every comment, outdated ones too, from the page or the palette
+- [ ] Delete every outdated or every resolved comment, from the page or the palette, after a confirm
+- [ ] Delete every comment from the palette, after a confirm
 
 ## Staying up to date
 

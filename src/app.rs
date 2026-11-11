@@ -13,7 +13,7 @@ use rune_kit::{FileNode, FileTree, TreeModel};
 use serde::{Deserialize, Serialize};
 
 use crate::action::{Action, Integration, Stashed};
-use crate::comments::{Anchor, Comment, Comments, prompt};
+use crate::comments::{Anchor, Comment, Comments, Group, prompt};
 use crate::forge::Hosted;
 use crate::gh::{self, PullRequest};
 use crate::git::{Repo, Result};
@@ -269,6 +269,8 @@ pub struct State {
     pub edit_text: TextEdit,
     /// The comment waiting for its deletion to be confirmed.
     pub deleting: Option<u64>,
+    /// The comments asked to be deleted together.
+    pub deleting_group: Option<Group>,
     /// Whether the commit dialog is open.
     pub committing: bool,
     pub commit_text: TextEdit,
@@ -351,6 +353,7 @@ impl State {
             editing: None,
             edit_text: TextEdit::default(),
             deleting: None,
+            deleting_group: None,
             committing: false,
             commit_text: TextEdit::default(),
             stashing: None,
@@ -806,6 +809,26 @@ impl State {
 
     pub fn cancel_delete(&mut self) {
         self.deleting = None;
+    }
+
+    pub fn resolve_all_comments(&mut self) {
+        self.comments.resolve_all();
+        self.comments_changed();
+    }
+
+    pub fn ask_to_delete_group(&mut self, group: Group) {
+        self.deleting_group = Some(group);
+    }
+
+    pub fn confirm_delete_group(&mut self) {
+        if let Some(group) = self.deleting_group.take() {
+            self.comments.delete_group(group);
+            self.comments_changed();
+        }
+    }
+
+    pub fn cancel_delete_group(&mut self) {
+        self.deleting_group = None;
     }
 
     /// The open comments whose code is still there, which copying them all takes.
@@ -1478,6 +1501,10 @@ impl State {
         offer(true, shortcuts);
         let to_copy = self.comments_to_copy().len();
         offer(to_copy > 0, Command::new(APPLICATION, copy_label(to_copy), State::copy_open_comments).shortcut(COPY));
+        offer(!self.comments.open().is_empty(), Command::new(APPLICATION, "Resolve all comments", |s, _| s.resolve_all_comments()));
+        for (group, label) in [(Group::Outdated, "Delete outdated comments"), (Group::Resolved, "Delete resolved comments"), (Group::All, "Delete all comments")] {
+            offer(self.comments.count(group) > 0, Command::new(APPLICATION, label, move |s, _| s.ask_to_delete_group(group)));
+        }
 
         offer(self.can_stage_all(), Command::new("Git", "Stage all", |s, _| s.run(Action::StageAll)));
         offer(self.can_unstage_all(), Command::new("Git", "Unstage all", |s, _| s.run(Action::UnstageAll)));
@@ -1564,7 +1591,7 @@ impl State {
 
     fn dialog_open(&self) -> bool {
         let pickers = self.switcher.is_some() || self.merger.is_some() || self.shell.opener.is_some();
-        let dialogs = self.deleting.is_some() || self.confirming.is_some() || self.committing || self.stashing.is_some() || self.managing_remotes || self.action_failure.is_some() || self.showing_keys;
+        let dialogs = self.deleting.is_some() || self.deleting_group.is_some() || self.confirming.is_some() || self.committing || self.stashing.is_some() || self.managing_remotes || self.action_failure.is_some() || self.showing_keys;
         pickers || dialogs
     }
 

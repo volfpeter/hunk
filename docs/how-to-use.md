@@ -80,9 +80,13 @@ Resolved comments start closed: open one with the arrow by its file name. What y
 
 ## Hand comments to an agent
 
-**Copy 3 open comments**, at the top of the comments page or in the [command palette](#commands), or **Ctrl+Shift+C**, copies them as one prompt, with the file, lines and code each one refers to. Paste it into your coding agent. Outdated comments are left out, as their code is gone. **Copy** in a comment's header copies that one alone, outdated or not.
+The copy button beside the open count at the top of the comments page, **Copy 3 open comments** in the [command palette](#commands), or **Ctrl+Shift+C** copies the open comments as one prompt, with the file, lines and code each one refers to. Paste it into your coding agent. Outdated comments are left out, as their code is gone. **Copy** in a comment's header copies that one alone, outdated or not.
 
 Once a comment is dealt with, press **Resolve** on it. Resolved comments leave the diff and future prompts, but stay at the end of the comments page. Press **Reopen** on one to bring it back.
+
+## Clear comments out
+
+The row at the top of the comments page counts open, outdated and resolved comments, with buttons beside each count acting on all of them at once. Beside the open count: copy them, and resolve every comment, outdated ones too. Beside the outdated and the resolved counts: delete them, after a confirm. The [command palette](#commands) has all of these, plus **Delete all comments**.
 
 ## Stage, commit and discard
 

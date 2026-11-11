@@ -202,6 +202,37 @@ impl Comment {
     }
 }
 
+/// Comments cleared together: those of one status, or all of them.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Group {
+    Outdated,
+    Resolved,
+    All,
+}
+
+impl Group {
+    /// As a sentence names its comments, with `count` of them.
+    pub fn name(self, count: usize) -> String {
+        let status = match self {
+            Group::Outdated => "outdated ",
+            Group::Resolved => "resolved ",
+            Group::All => "",
+        };
+        match count {
+            1 => format!("1 {status}comment"),
+            n => format!("{n} {status}comments"),
+        }
+    }
+
+    fn holds(self, comment: &Comment) -> bool {
+        match self {
+            Group::Outdated => comment.status() == Some("Outdated"),
+            Group::Resolved => comment.resolved,
+            Group::All => true,
+        }
+    }
+}
+
 /// `comments` as one prompt: a block per comment, each saying where it points, quoting the code
 /// and giving the comment, with a rule between blocks.
 pub fn prompt(comments: &[&Comment]) -> String {
@@ -360,6 +391,22 @@ impl Comments {
 
     pub fn delete(&mut self, id: u64) {
         self.all.retain(|comment| comment.id != id);
+        self.save();
+    }
+
+    pub fn resolve_all(&mut self) {
+        for comment in &mut self.all {
+            comment.resolved = true;
+        }
+        self.save();
+    }
+
+    pub fn count(&self, group: Group) -> usize {
+        self.all.iter().filter(|comment| group.holds(comment)).count()
+    }
+
+    pub fn delete_group(&mut self, group: Group) {
+        self.all.retain(|comment| !group.holds(comment));
         self.save();
     }
 
@@ -593,6 +640,25 @@ Was this right?
 
         comments.set_resolved(2, false);
         assert_eq!((ids(&comments.listed()), ids(&comments.open())), (vec![2, 3, 1], vec![1, 2, 3]));
+    }
+
+    #[test]
+    fn deleting_outdated_comments_spares_resolved_ones_whose_code_is_gone() {
+        let fixture = Fixture::new();
+        let mut comments = Comments::load(&fixture.repo);
+        comments.add(anchor(1, &["a"]), Review::Changes, None, None, "Open".into());
+        comments.add(anchor(2, &["b"]), Review::Changes, None, None, "Outdated".into());
+        comments.add(anchor(3, &["c"]), Review::Changes, None, None, "Resolved, code gone".into());
+        comments.all[1].outdated = true;
+        comments.all[2].outdated = true;
+        comments.set_resolved(3, true);
+        let ids = |comments: &Comments| comments.listed().iter().map(|comment| comment.id).collect::<Vec<_>>();
+
+        comments.delete_group(Group::Outdated);
+        assert_eq!(ids(&comments), vec![1, 3]);
+
+        comments.delete_group(Group::Resolved);
+        assert_eq!(ids(&comments), vec![1]);
     }
 
     #[test]

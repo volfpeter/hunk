@@ -349,11 +349,14 @@ The panel's trouble was a lack of purpose, filled with whatever needed a place, 
 
 A first step is done: the panel and the diff are sheets on a darker page, and the diff has a status row of its own, with the summary and Unified/Split. Still open: collapsing the panel, to one line saying what is under review rather than to nothing, with a key.
 
+The comments page has a thin sheet of its own above the diff: each status's count with icon buttons acting on all its comments, so a delete needs no qualifier. Resolve all takes outdated comments too, since an agent's fix usually rewrites the commented lines, leaving them outdated; resolving only the open ones would resolve what the agent didn't touch. Delete outdated spares resolved comments, whose code isn't looked for. Delete all is palette-only, being rare and destructive. Every delete confirms with a count.
+
 Tasks:
 
 - [ ] Rework the top panel: a clear purpose in every review, and clear separation from the diff (the bar also overflows narrow windows, which hides Pull and Push; step 4f's icons and counts made it fit 900 points)
 - [ ] Stop new files wasting half of the split view (may need a Rune issue)
 - [ ] Decide what picking the default branch should show (it's empty today)
+- [x] Act on many comments at once: resolve all, delete outdated, delete resolved, delete all
 
 ### Step 6: Code overlay
 

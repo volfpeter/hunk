@@ -7,7 +7,7 @@ use rune_kit::{Badge, Button, ButtonVariant, ControlSize, Dialog, FileNode, Icon
 
 use crate::action::{Action, Integration, Stashed};
 use crate::app::{APPLICATION, COMMENTS, COMMIT, COPY, Command, DRAFT_NOTE, KEYS, Kind, MERGE, PALETTE, PULL, PUSH, PullRequestOffer, State, Target, copy_label};
-use crate::comments::Comment;
+use crate::comments::{Comment, Group};
 use crate::gh::{PullRequest, Status};
 use crate::open::{Choice, tilde};
 use crate::overview::{CommitPlan, Entry, LineCounts, Operation};
@@ -119,6 +119,20 @@ static KEYS_ICON: Icon = Icon {
     body: r#"<circle cx="8" cy="8" r="6.25" stroke="currentColor" stroke-width="1.5" fill="none"/><path d="M6.25 6.25C6.25 5.25 7 4.5 8 4.5C9 4.5 9.75 5.25 9.75 6.15C9.75 7.5 8 7.6 8 9" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" fill="none"/><circle cx="8" cy="11.5" r="0.9" fill="currentColor"/>"#,
 };
 
+/// Resolving: a check in a circle.
+static RESOLVE_ICON: Icon = Icon {
+    name: "hunk-resolve",
+    view: 16.0,
+    body: r#"<circle cx="8" cy="8" r="6.25" stroke="currentColor" stroke-width="1.5" fill="none"/><path d="M5.25 8.25L7.25 10.25L10.75 6.25" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" fill="none"/>"#,
+};
+
+/// Deleting: a bin with its lid.
+static DELETE_ICON: Icon = Icon {
+    name: "hunk-delete",
+    view: 16.0,
+    body: r#"<path d="M2.5 4H13.5M6.25 4V2.5H9.75V4M4 4L4.75 13.5H11.25L12 4M6.75 6.75V10.75M9.25 6.75V10.75" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" fill="none"/>"#,
+};
+
 /// Where a comment card sits, which decides what it repeats of its surroundings.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum CardPlace {
@@ -156,6 +170,7 @@ pub fn view(s: &State, cx: &mut Cx<State>) -> El {
     // Under the confirm for aborting.
     merge_dialog(s, &k, &mut overlays);
     delete_dialog(s, &k, &mut overlays);
+    delete_group_dialog(s, &k, &mut overlays);
     action_dialog(s, &k, &mut overlays);
     commit_dialog(s, &k, &mut overlays);
     stash_dialog(s, &k, &mut overlays);
@@ -169,7 +184,7 @@ pub fn view(s: &State, cx: &mut Cx<State>) -> El {
         return root(col().fill(k.c.page).padding(SHEET_GAP).child(welcome(s, &k)), overlays);
     }
     let sheets = col().w_full().grow(1.0).min_h(0.0).px(SHEET_GAP).pb(SHEET_GAP).gap(SHEET_GAP);
-    let sheets = if s.showing_comments { sheets.child(comments_page(s, &k)) } else { sheets.child(panel(s, &k)).child(main(s, &k)) };
+    let sheets = if s.showing_comments { sheets.child(comment_groups(s, &k)).child(comments_page(s, &k)) } else { sheets.child(panel(s, &k)).child(main(s, &k)) };
     root(col().fill(k.c.page).child(bar(s, &k)).child(sheets), overlays)
 }
 
@@ -586,25 +601,39 @@ fn compared(k: &Kit, review: &Review, font: TextStyle, color: Color) -> El {
         .child(name(new))
 }
 
+/// How many comments have each status, with what can be done to all of them at once.
+fn comment_groups(s: &State, k: &Kit) -> El {
+    let (outdated, resolved) = (s.comments.count(Group::Outdated), s.comments.count(Group::Resolved));
+    let open = s.comments.count(Group::All) - outdated - resolved;
+    let to_copy = s.comments_to_copy().len();
+    let (glyph, help) = if s.just_copied(None) { (k.glyph.check, "Copied".to_owned()) } else { (k.glyph.copy, format!("{}, as one prompt for an agent", copy_label(to_copy))) };
+    let copy = action_icon(glyph, help, to_copy == 0).shortcut(COPY).on_press_tx(State::copy_open_comments).build(k).key("copy-open");
+    let resolve = action_icon(&RESOLVE_ICON, "Resolve all comments, outdated ones too".to_owned(), open + outdated == 0);
+    let resolve = resolve.on_press(State::resolve_all_comments).build(k).key("resolve-all");
+    let delete = |group: Group, count: usize, key: &str| {
+        let help = format!("Delete {}", group.name(count));
+        action_icon(&DELETE_ICON, help, count == 0).on_press(move |s: &mut State| s.ask_to_delete_group(group)).build(k).key(key)
+    };
+    let group = |summary: String, actions: Vec<El>| row().gap(4.0).items_center().child(one_line(summary).font(k.ty.ui).color(k.c.text_base).pr(4.0)).children(actions);
+    let groups = status_line()
+        .key("comment-groups")
+        .gap(24.0)
+        .child(group(format!("{open} open"), vec![copy, resolve]))
+        .child(group(format!("{outdated} outdated"), vec![delete(Group::Outdated, outdated, "delete-outdated")]))
+        .child(group(format!("{resolved} resolved"), vec![delete(Group::Resolved, resolved, "delete-resolved")]));
+    sheet(k, groups)
+}
+
+/// A button showing only `glyph`, `help` saying what it does.
+fn action_icon(glyph: &'static Icon, help: String, disabled: bool) -> IconButton {
+    IconButton::new(glyph).variant(IconButtonVariant::Ghost).label(help.clone()).help(help).disabled(disabled)
+}
+
 /// Every comment on one sheet, open first, each under the code it was written on.
 fn comments_page(s: &State, k: &Kit) -> El {
     let area = sheet(k, col().key("comments-page").w_full().grow(1.0).min_h(0.0));
     let listed = s.comments.listed();
-    let outdated = listed.iter().filter(|comment| comment.status() == Some("Outdated")).count();
-    let resolved = listed.iter().filter(|comment| comment.resolved).count();
-    let open = listed.len() - outdated - resolved;
-    let to_copy = s.comments_to_copy().len();
-    let copy = Button::new(if s.just_copied(None) { "Copied".to_owned() } else { copy_label(to_copy) })
-        .variant(ButtonVariant::Ghost)
-        .disabled(to_copy == 0)
-        .shortcut(COPY)
-        .help("Copy them as one prompt for an agent, leaving out outdated ones")
-        .on_press_tx(State::copy_open_comments);
-    let status = status_line()
-        .child(one_line(format!("{open} open, {outdated} outdated, {resolved} resolved")).font(k.ty.ui_medium).color(k.c.text_base))
-        .child(row().grow(1.0))
-        .child(copy.build(k))
-        .child(layout_control(s, k));
+    let status = status_line().child(row().grow(1.0)).child(layout_control(s, k));
     let area = area
         .child(sheet_header(k, "comments-status", status))
         .children(s.comments.error.as_ref().map(|error| error_line(k, error)))
@@ -795,6 +824,12 @@ fn delete_dialog(s: &State, k: &Kit, overlays: &mut Vec<El>) {
     let Some(comment) = s.deleting.and_then(|id| s.comments.get(id)) else { return };
     let location = text(comment.anchor.location()).font(k.ty.ui).color(k.c.text_base).wrap_anywhere();
     confirm_dialog(k, overlays, Dialog::new("delete-comment", "Delete comment?").description(UNDONE), location, "Delete", State::confirm_delete, State::cancel_delete);
+}
+
+fn delete_group_dialog(s: &State, k: &Kit, overlays: &mut Vec<El>) {
+    let Some(group) = s.deleting_group else { return };
+    let dialog = Dialog::new("delete-comments", format!("Delete {}?", group.name(s.comments.count(group)))).description(UNDONE);
+    confirm_dialog(k, overlays, dialog, col(), "Delete", State::confirm_delete_group, State::cancel_delete_group);
 }
 
 /// Asks before an action that can't be taken back.
