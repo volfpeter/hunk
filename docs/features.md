@@ -16,6 +16,8 @@ Everything the app does, to try at your own pace. A tick means Peter tried it an
 - [ ] Ctrl+O, or the repository's name in the bar, opens a repository
 - [ ] The open dialog lists recent repositories, newest first, without those that are gone
 - [ ] Typing a path completes folders, marking repositories; Tab completes, Enter opens
+- [ ] Typing a name in the open dialog lists the recent repositories it matches first
+- [ ] Long lists in dialogs (palette, open, branches, merge, conflicts) scroll instead of being cut, following the arrow keys
 - [ ] Ctrl+Enter in the open dialog opens the repository in a new window
 - [ ] Opening a repository another window shows brings that window to the front
 - [ ] The window's title is the open folder's name, or `hunk` with nothing open

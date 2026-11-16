@@ -77,7 +77,7 @@ fn build(opened: Option<Opened>, shared: &Rc<RefCell<Shared>>) -> (u64, App<Stat
     let root = opened.as_ref().and_then(Opened::root).map(Path::to_owned);
     let id = shared.borrow().next;
     let shell = Shell::new(shared.clone(), id);
-    let app = App::new(spec).init(move || State::new(opened, shell)).on_focus(State::on_focus).on_close(State::on_close).modifier_keys();
+    let app = App::new(spec).init(move || State::new(opened, shell)).on_focus(State::on_focus).on_close(State::on_close);
     let handle = app.handle();
     handle.update(|state, tx| tx.set_title(state.title()));
     let mut shared = shared.borrow_mut();

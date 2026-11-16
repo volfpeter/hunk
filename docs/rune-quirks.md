@@ -30,7 +30,7 @@ Check with a long string without spaces, in a narrow window.
 
 - A dialog opens focused on its close button, so Enter dismisses it. A focused button takes plain Enter only: Ctrl+Enter goes on to the window's `on_key`.
 - Short dialogs need `.fit()`, or they stay at the standard height.
-- A fitted dialog taller than the window runs off both ends, title and close button included. Keep it short, or scroll its body.
+- A fitted dialog taller than the window runs off both ends, title and close button included. Keep it short, or scroll its body. A view doesn't know the window's height, so a list that can grow takes a fixed `max_h` and scrolls.
 - `Dialog` always centres its panel. To place it elsewhere, re-align the layer it pushes last, as the palette does.
 - `Dialog` is either 368 points tall or as tall as its content. A panel filling the window is a layer of our own, with `El::modal` as `Dialog` uses.
 
@@ -66,3 +66,7 @@ Check with a long string without spaces, in a narrow window.
 - `scroll` needs an `x` and `y` over the view, and a negative `dy` scrolls down.
 - The script's clock runs about twice as fast as real time, which matters when changing files from outside during a run.
 - `type` enters its text over several frames. A key sent soon after lands mid-text, so leave a gap before Enter.
+
+## Upgrading
+
+Rune builds against patched copies of some crates, and a dependency's `[patch]` doesn't reach us. On a bump, mirror its root `[patch.crates-io]` in ours at the same rev, or the build fails resolving features that only the patched copies have.

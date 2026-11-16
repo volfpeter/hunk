@@ -7,10 +7,18 @@ license = "MIT"
 [dependencies]
 dirs = "7.0.0"
 notify = "8.2.1"
-rune = { git = "https://github.com/anomalyco/rune", rev = "647cbbe243395a3bc30e96eaec924c29c418a3ea" }
-rune-kit = { git = "https://github.com/anomalyco/rune", rev = "647cbbe243395a3bc30e96eaec924c29c418a3ea" }
+rune = { git = "https://github.com/anomalyco/rune", rev = "631e8a67cb3c40225efa3f6c4f57b80e7b18f190" }
+rune-kit = { git = "https://github.com/anomalyco/rune", rev = "631e8a67cb3c40225efa3f6c4f57b80e7b18f190" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 
 [dev-dependencies]
 tempfile = "3"
+
+# Rune builds against its own patched copies of these; a dependency's `[patch]` doesn't reach us.
+[patch.crates-io]
+wgpu-hal = { git = "https://github.com/anomalyco/rune", rev = "631e8a67cb3c40225efa3f6c4f57b80e7b18f190" }
+winit = { git = "https://github.com/anomalyco/rune", rev = "631e8a67cb3c40225efa3f6c4f57b80e7b18f190" }
+parley_engine = { git = "https://github.com/anomalyco/rune", rev = "631e8a67cb3c40225efa3f6c4f57b80e7b18f190" }
+accesskit_windows = { git = "https://github.com/anomalyco/rune", rev = "631e8a67cb3c40225efa3f6c4f57b80e7b18f190" }
+accesskit_macos = { git = "https://github.com/anomalyco/rune", rev = "631e8a67cb3c40225efa3f6c4f57b80e7b18f190" }

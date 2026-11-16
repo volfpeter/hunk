@@ -5,9 +5,7 @@ use std::path::{Path, PathBuf};
 
 use crate::comments::Comments;
 use crate::git::{self, Repo};
-
-/// How many folders the open dialog offers at once.
-const SHOWN: usize = 10;
+use crate::switcher::holds_every_word;
 
 /// What a folder turned out to hold.
 pub enum Opened {
@@ -62,27 +60,28 @@ pub struct Choice {
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Offer {
     pub choices: Vec<Choice>,
-    /// How many more match than are offered.
-    pub more: usize,
     /// Recent repositories that are gone.
     pub gone: Vec<PathBuf>,
 }
 
 impl Offer {
-    /// With nothing `typed`, the `recent` repositories still there. Otherwise the folders
-    /// completing the path typed, which starts at the home folder unless it is absolute.
+    /// With nothing `typed`, the `recent` repositories still there. Otherwise those whose names
+    /// hold every word typed, then the folders completing the path typed, which starts at the
+    /// home folder unless it is absolute.
     pub fn new(typed: &str, recent: &[PathBuf]) -> Offer {
+        let (there, gone): (Vec<PathBuf>, _) = recent.iter().cloned().partition(|root| root.join(".git").exists());
+        let recent = there.into_iter().map(recent_choice);
         if typed.trim().is_empty() {
-            let (there, gone): (Vec<PathBuf>, _) = recent.iter().cloned().partition(|root| root.join(".git").exists());
-            return Offer { choices: there.into_iter().map(recent_choice).collect(), more: 0, gone };
+            return Offer { choices: recent.collect(), gone };
         }
+        let mut choices: Vec<Choice> = recent.filter(|choice| holds_every_word(&choice.name, typed)).collect();
         let typed = if typed == "~" { "~/" } else { typed };
         let (folder, start) = typed.split_at(typed.rfind('/').map_or(0, |slash| slash + 1));
-        let mut choices = subfolders(&resolve(folder), start, folder);
-        choices.sort_by_key(|choice| choice.name.to_lowercase());
-        let more = choices.len().saturating_sub(SHOWN);
-        choices.truncate(SHOWN);
-        Offer { choices, more, gone: Vec::new() }
+        let mut folders = subfolders(&resolve(folder), start, folder);
+        folders.retain(|folder| !choices.iter().any(|choice| choice.path == folder.path));
+        folders.sort_by_key(|choice| choice.name.to_lowercase());
+        choices.extend(folders);
+        Offer { choices, gone }
     }
 }
 
@@ -177,6 +176,20 @@ mod tests {
 
         assert_eq!(offer.choices.iter().map(|choice| choice.path.as_path()).collect::<Vec<_>>(), [fixture.repo.root()]);
         assert_eq!(offer.gone, [gone]);
+    }
+
+    #[test]
+    fn offers_the_recent_repositories_named_like_what_is_typed_first() {
+        let dir = TempDir::new().unwrap();
+        let (app, api) = (dir.path().join("web-app"), dir.path().join("api"));
+        for root in [&app, &api] {
+            fs::create_dir_all(root.join(".git")).unwrap();
+        }
+
+        let offer = Offer::new("APP", &[api.clone(), app.clone()]);
+
+        assert_eq!(offer.choices[0].path, app);
+        assert!(offer.choices.iter().all(|choice| choice.path != api));
     }
 
     #[test]

@@ -34,6 +34,8 @@ const FAILURE_MAX_HEIGHT: f32 = 320.0;
 const PICKER_WIDTH: f32 = 560.0;
 const PICKER_ROW_HEIGHT: f32 = 32.0;
 const PICKER_MARKER_WIDTH: f32 = 12.0;
+/// The most height a dialog's list takes before it scrolls: ten picker rows.
+const DIALOG_LIST_MAX_HEIGHT: f32 = 10.0 * (PICKER_ROW_HEIGHT + 2.0);
 /// The most width a list entry's detail takes from its title.
 const DETAIL_MAX_WIDTH: f32 = 240.0;
 /// The most width where a folder is takes from its name.
@@ -46,8 +48,6 @@ const PULL_REQUEST_MAX_WIDTH: f32 = 200.0;
 const KEYS_COLUMN_WIDTH: f32 = 332.0;
 const KEYS_COLUMN_GAP: f32 = 24.0;
 const KEY_ROW_HEIGHT: f32 = 28.0;
-/// The most conflicted files the merge dialog names before counting the rest.
-const CONFLICTS_SHOWN: usize = 8;
 
 /// Two points compared, neither leading to the other.
 static COMPARED: Icon = Icon {
@@ -1006,22 +1006,27 @@ fn palette_dialog(s: &State, k: &Kit, overlays: &mut Vec<El>) {
         .placeholder("Type to filter")
         .label("Command")
         .on_edit(|s: &mut State| &mut s.palette_text)
-        .on_change(|s: &mut State, _: &mut Tx| s.palette = Some(0))
+        .on_change(|s: &mut State, tx: &mut Tx| {
+            s.palette = Some(0);
+            reveal_row(tx, "commands", "command", s.palette);
+        })
         .on_submit(move |s: &mut State, tx: &mut Tx| s.run_command(s.palette.unwrap_or_default(), tx))
-        .on_key(|s: &mut State, event: &KeyEvent, _: &mut Tx| match event.key {
+        .on_key(|s: &mut State, event: &KeyEvent, tx: &mut Tx| match event.key {
             Key::Up => {
                 s.move_palette(-1);
+                reveal_row(tx, "commands", "command", s.palette);
                 true
             }
             Key::Down => {
                 s.move_palette(1);
+                reveal_row(tx, "commands", "command", s.palette);
                 true
             }
             _ => edit_by_word(&mut s.palette_text, event),
         });
     let commands = s.palette_commands();
     let rows = commands.iter().enumerate().map(|(index, command)| palette_row(k, command, index == active, index));
-    let list = col().key("commands").role("listbox").w_full().gap(2.0).children(rows);
+    let list = dialog_list("commands").role("listbox").children(rows);
     let list = if commands.is_empty() { list.child(muted(k, "Nothing matches").py(8.0)) } else { list };
     Dialog::new("palette", "Commands").width(PICKER_WIDTH).fit().open(true).on_close(State::close_palette).child(col().w_full().px(16.0).pb(16.0).gap(12.0).child(field.build(k)).child(list)).build(k, overlays);
     pin_to_top(overlays);
@@ -1037,17 +1042,19 @@ fn open_dialog(s: &State, k: &Kit, overlays: &mut Vec<El>) {
         .on_edit(|s: &mut State| &mut s.shell.open_text)
         .on_change(|s: &mut State, _: &mut Tx| s.offer_folders())
         .on_submit(|s: &mut State, _: &mut Tx| s.open_choice(s.shell.opener.unwrap_or_default(), Target::ThisWindow))
-        .on_key(|s: &mut State, event: &KeyEvent, _: &mut Tx| match event.key {
+        .on_key(|s: &mut State, event: &KeyEvent, tx: &mut Tx| match event.key {
             Key::Enter if event.mods.cmd => {
                 s.open_choice(s.shell.opener.unwrap_or_default(), Target::NewWindow);
                 true
             }
             Key::Up => {
                 s.move_opener(-1);
+                reveal_row(tx, "folders", "folder", s.shell.opener);
                 true
             }
             Key::Down => {
                 s.move_opener(1);
+                reveal_row(tx, "folders", "folder", s.shell.opener);
                 true
             }
             Key::Tab => {
@@ -1062,7 +1069,7 @@ fn open_dialog(s: &State, k: &Kit, overlays: &mut Vec<El>) {
         });
     let offer = &s.shell.offer;
     let rows = offer.choices.iter().enumerate().map(|(index, choice)| choice_row(k, choice, index == active, index));
-    let list = col().key("folders").role("listbox").w_full().gap(2.0).children(rows);
+    let list = dialog_list("folders").role("listbox").children(rows);
     let typed = s.shell.open_text.text.trim();
     let none = match typed {
         "" => "No recent repositories",
@@ -1070,9 +1077,8 @@ fn open_dialog(s: &State, k: &Kit, overlays: &mut Vec<El>) {
         _ => "No folders match",
     };
     let list = if offer.choices.is_empty() && !s.offer_pending() { list.child(muted(k, none).py(8.0)) } else { list };
-    let more = (offer.more > 0).then(|| muted(k, &format!("{} more, type to narrow them down", offer.more)).py(4.0));
     let hint = text("Tab completes the folder, Enter opens it, Ctrl+Enter in a new window").font(k.ty.text_small).color(k.c.text_faint).px(8.0);
-    let content = col().w_full().px(16.0).pb(16.0).gap(12.0).child(field.build(k)).child(list.children(more)).child(hint);
+    let content = col().w_full().px(16.0).pb(16.0).gap(12.0).child(field.build(k)).child(list).child(hint);
     Dialog::new("open", "Open a repository").width(PICKER_WIDTH).fit().open(true).on_close(State::close_opener).child(content).build(k, overlays);
     pin_to_top(overlays);
 }
@@ -1129,21 +1135,26 @@ fn branch_dialog(s: &State, k: &Kit, overlays: &mut Vec<El>) {
         .placeholder("Branch name")
         .label("Branch")
         .on_edit(|s: &mut State| &mut s.branch_text)
-        .on_change(|s: &mut State, _: &mut Tx| s.switcher = Some(0))
+        .on_change(|s: &mut State, tx: &mut Tx| {
+            s.switcher = Some(0);
+            reveal_row(tx, "branches", "branch", s.switcher);
+        })
         .on_submit(|s: &mut State, _: &mut Tx| s.pick_branch(s.switcher.unwrap_or_default()))
-        .on_key(|s: &mut State, event: &KeyEvent, _: &mut Tx| match event.key {
+        .on_key(|s: &mut State, event: &KeyEvent, tx: &mut Tx| match event.key {
             Key::Up => {
                 s.move_switcher(-1);
+                reveal_row(tx, "branches", "branch", s.switcher);
                 true
             }
             Key::Down => {
                 s.move_switcher(1);
+                reveal_row(tx, "branches", "branch", s.switcher);
                 true
             }
             _ => edit_by_word(&mut s.branch_text, event),
         });
     let offer = s.branch_offer();
-    let mut list = col().key("branches").role("listbox").w_full().gap(2.0);
+    let mut list = dialog_list("branches").role("listbox");
     for (index, choice) in offer.choices.iter().enumerate() {
         let before = index.checked_sub(1).map(|before| &offer.choices[before]);
         match choice {
@@ -1154,7 +1165,6 @@ fn branch_dialog(s: &State, k: &Kit, overlays: &mut Vec<El>) {
         list = list.child(branch_row(s, k, choice, index == active, index));
     }
     let list = if offer.choices.is_empty() { list.child(muted(k, "No branches match").py(8.0)) } else { list };
-    let more = (offer.more > 0).then(|| muted(k, &format!("{} more, type to narrow them down", offer.more)).py(4.0));
     let footer = row()
         .w_full()
         .gap(4.0)
@@ -1163,7 +1173,7 @@ fn branch_dialog(s: &State, k: &Kit, overlays: &mut Vec<El>) {
         .child(row().grow(1.0))
         .child(small_button("Fetch").shortcut("Ctrl+Shift+F").help("Get every remote's branches").disabled(!s.can_fetch()).on_press(|s: &mut State| s.run(Action::Fetch)).build(k))
         .child(small_button("Remotes").on_press(State::open_remotes).build(k));
-    let content = col().w_full().px(16.0).pb(16.0).gap(12.0).child(field.build(k)).child(list.children(more)).child(footer);
+    let content = col().w_full().px(16.0).pb(16.0).gap(12.0).child(field.build(k)).child(list).child(footer);
     Dialog::new("switch-branch", "Switch branch").width(PICKER_WIDTH).fit().open(true).on_close(State::close_switcher).child(content).build(k, overlays);
     pin_to_top(overlays);
 }
@@ -1205,21 +1215,26 @@ fn integration(s: &State, k: &Kit, active: usize) -> El {
         .placeholder("Branch name")
         .label("Branch")
         .on_edit(|s: &mut State| &mut s.merge_text)
-        .on_change(|s: &mut State, _: &mut Tx| s.merger = Some(0))
+        .on_change(|s: &mut State, tx: &mut Tx| {
+            s.merger = Some(0);
+            reveal_row(tx, "merge-branches", "merge", s.merger);
+        })
         .on_submit(|s: &mut State, _: &mut Tx| s.integrate(s.merger.unwrap_or_default()))
-        .on_key(|s: &mut State, event: &KeyEvent, _: &mut Tx| match event.key {
+        .on_key(|s: &mut State, event: &KeyEvent, tx: &mut Tx| match event.key {
             Key::Up => {
                 s.move_merger(-1);
+                reveal_row(tx, "merge-branches", "merge", s.merger);
                 true
             }
             Key::Down => {
                 s.move_merger(1);
+                reveal_row(tx, "merge-branches", "merge", s.merger);
                 true
             }
             _ => edit_by_word(&mut s.merge_text, event),
         });
     let offer = s.merge_offer();
-    let mut list = col().key("merge-branches").role("listbox").w_full().gap(2.0);
+    let mut list = dialog_list("merge-branches").role("listbox");
     for (index, choice) in offer.choices.iter().enumerate() {
         let (title, detail) = match choice {
             BranchChoice::Local(branch) => (branch.id.clone(), branch.detail.clone()),
@@ -1234,7 +1249,6 @@ fn integration(s: &State, k: &Kit, active: usize) -> El {
         list = list.child(picker_row(k, format!("merge{index}"), title, Some(detail), index == active, move |s, _| s.merger = Some(index)));
     }
     let list = if offer.choices.is_empty() { list.child(muted(k, "No other branches match").py(8.0)) } else { list };
-    let more = (offer.more > 0).then(|| muted(k, &format!("{} more, type to narrow them down", offer.more)).py(4.0));
 
     let picked = s.merge_choice(active);
     let (head, branch) = (&s.overview.head, picked.as_deref().unwrap_or("it"));
@@ -1251,7 +1265,7 @@ fn integration(s: &State, k: &Kit, active: usize) -> El {
         .child(Button::new("Cancel").variant(ButtonVariant::Ghost).on_press(State::close_merger).build(k))
         .child(Button::new(s.integration.label()).disabled(!s.can_integrate() || picked.is_none()).on_press(move |s: &mut State| s.integrate(active)).build(k));
     let on = text(format!("On {head}")).font(k.ty.ui).color(k.c.text_muted).wrap_anywhere();
-    col().w_full().px(16.0).pb(16.0).gap(12.0).child(on).child(field.build(k)).child(list.children(more)).child(group.build(k)).children(pushed).child(buttons)
+    col().w_full().px(16.0).pb(16.0).gap(12.0).child(on).child(field.build(k)).child(list).child(group.build(k)).children(pushed).child(buttons)
 }
 
 /// Where the merge or rebase that stopped is, what holds it up, and the ways out.
@@ -1261,8 +1275,7 @@ fn stopped(s: &State, k: &Kit, operation: &Operation) -> El {
         0 => "No conflicts are left. Continue takes what is staged.".to_owned(),
         n => format!("{} to settle in your editor, then stage.", plural(n, "conflicted file")),
     };
-    let files = conflicted.iter().take(CONFLICTS_SHOWN).map(|path| one_line((*path).to_owned()).truncate_head().font(k.ty.mono).color(k.c.text_base).px(8.0));
-    let more = conflicted.len().checked_sub(CONFLICTS_SHOWN).filter(|more| *more > 0).map(|more| muted(k, &format!("and {more} more")));
+    let files = conflicted.iter().map(|path| one_line((*path).to_owned()).truncate_head().font(k.ty.mono).color(k.c.text_base).px(8.0));
     let buttons = row()
         .w_full()
         .gap(8.0)
@@ -1277,7 +1290,7 @@ fn stopped(s: &State, k: &Kit, operation: &Operation) -> El {
         .gap(8.0)
         .child(text(underway(s, operation)).font(k.ty.ui_medium).color(k.c.text_base).wrap_anywhere())
         .child(text(said).font(k.ty.ui).color(k.c.text_muted).wrap_anywhere())
-        .child(col().w_full().gap(2.0).children(files).children(more))
+        .child(dialog_list("conflicts").children(files))
         .child(buttons.pt(8.0))
 }
 
@@ -1348,6 +1361,18 @@ fn palette_row(k: &Kit, command: &Command, active: bool, index: usize) -> El {
 fn choice_row(k: &Kit, choice: &Choice, active: bool, index: usize) -> El {
     let detail = (!choice.detail.is_empty()).then(|| one_line(choice.detail.clone()).truncate_head().max_w(PLACE_MAX_WIDTH).font(k.ty.text_small).color(k.c.text_faint));
     picker_row(k, format!("folder{index}"), choice.name.clone(), detail, active, move |s, _| s.open_choice(index, Target::ThisWindow))
+}
+
+/// A dialog's list, which scrolls once taller than `DIALOG_LIST_MAX_HEIGHT`.
+fn dialog_list(key: &str) -> El {
+    col().key(key).w_full().max_h(DIALOG_LIST_MAX_HEIGHT).scroll(ScrollSpec { stick_bottom: false }).gap(2.0)
+}
+
+/// Scrolls the dialog list `list` to its row `row`, keyed `prefix` and its index.
+fn reveal_row(tx: &mut Tx, list: &str, prefix: &str, row: Option<usize>) {
+    if let Some(row) = row {
+        tx.scroll_into_view_in(list, format!("{prefix}{row}"));
+    }
 }
 
 /// A row of a dialog's list, `trailing` at its end. The highlighted one is marked, as Enter

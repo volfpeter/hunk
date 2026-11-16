@@ -2,9 +2,6 @@
 
 use crate::overview::{Entry, RemoteBranch};
 
-/// How many branches the switcher offers at once.
-const SHOWN: usize = 10;
-
 /// Something the switcher offers.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum BranchChoice {
@@ -19,37 +16,33 @@ pub enum BranchChoice {
 pub struct BranchOffer {
     /// Local branches, then those only on a remote, then a new branch.
     pub choices: Vec<BranchChoice>,
-    /// How many more branches match than are offered.
-    pub more: usize,
 }
 
 impl BranchOffer {
     /// The branches whose names hold every word `typed`, ignoring case, and a new branch named
     /// `typed` when no branch has that name and git could take it as one.
     pub fn new(typed: &str, local: &[Entry], remote: &[RemoteBranch]) -> BranchOffer {
-        let BranchOffer { mut choices, more } = BranchOffer::existing(typed, local, remote);
+        let BranchOffer { mut choices } = BranchOffer::existing(typed, local, remote);
         let name = typed.trim();
         let taken = local.iter().any(|branch| branch.id == name) || remote.iter().any(|branch| branch.name == name || branch.id() == name);
         if !name.is_empty() && !name.contains(char::is_whitespace) && !taken {
             choices.push(BranchChoice::Create(name.to_owned()));
         }
-        BranchOffer { choices, more }
+        BranchOffer { choices }
     }
 
     /// The branches whose names hold every word `typed`, ignoring case.
     pub fn existing(typed: &str, local: &[Entry], remote: &[RemoteBranch]) -> BranchOffer {
-        let words: Vec<String> = typed.split_whitespace().map(str::to_lowercase).collect();
-        let matches = |name: &str| {
-            let name = name.to_lowercase();
-            words.iter().all(|word| name.contains(word))
-        };
-        let local_matches = local.iter().filter(|branch| matches(&branch.id)).cloned().map(BranchChoice::Local);
-        let remote_matches = remote.iter().filter(|branch| matches(&branch.id())).cloned().map(BranchChoice::Remote);
-        let mut choices: Vec<BranchChoice> = local_matches.chain(remote_matches).collect();
-        let more = choices.len().saturating_sub(SHOWN);
-        choices.truncate(SHOWN);
-        BranchOffer { choices, more }
+        let local_matches = local.iter().filter(|branch| holds_every_word(&branch.id, typed)).cloned().map(BranchChoice::Local);
+        let remote_matches = remote.iter().filter(|branch| holds_every_word(&branch.id(), typed)).cloned().map(BranchChoice::Remote);
+        BranchOffer { choices: local_matches.chain(remote_matches).collect() }
     }
+}
+
+/// Whether `name` holds every word of `typed`, ignoring case.
+pub fn holds_every_word(name: &str, typed: &str) -> bool {
+    let name = name.to_lowercase();
+    typed.split_whitespace().all(|word| name.contains(&word.to_lowercase()))
 }
 
 #[cfg(test)]
@@ -90,15 +83,5 @@ mod tests {
         assert_eq!(names(&BranchOffer::new("feature", &locals, &remotes)), ["origin/feature"]);
         assert_eq!(names(&BranchOffer::new("origin/feature", &locals, &remotes)), ["origin/feature"]);
         assert_eq!(names(&BranchOffer::new("feat", &locals, &remotes)), ["origin/feature", "+feat"]);
-    }
-
-    #[test]
-    fn a_long_list_is_cut_but_still_offers_a_new_branch() {
-        let locals: Vec<Entry> = (0..SHOWN + 3).map(|n| local(&format!("b{n}"))).collect();
-
-        let offer = BranchOffer::new("b", &locals, &[]);
-
-        assert_eq!((offer.choices.len(), offer.more), (SHOWN + 1, 3));
-        assert_eq!(offer.choices.last(), Some(&BranchChoice::Create("b".to_owned())));
     }
 }
