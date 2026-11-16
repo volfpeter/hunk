@@ -3,14 +3,16 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use crate::browse::RecentFiles;
 use crate::comments::Comments;
 use crate::git::{self, Repo};
-use crate::switcher::holds_every_word;
+use crate::fuzzy;
 
 /// What a folder turned out to hold.
+#[expect(clippy::large_enum_variant, reason = "made once for each folder opened")]
 pub enum Opened {
-    /// The repository the folder is in, with its comments.
-    Repository(Repo, Comments),
+    /// The repository the folder is in, with its comments and the files opened in it lately.
+    Repository(Repo, Comments, RecentFiles),
     /// A folder in no repository.
     Folder(PathBuf),
 }
@@ -24,8 +26,8 @@ impl Opened {
         }
         Ok(match Repo::discover(&folder) {
             Ok(repo) => {
-                let comments = Comments::load(&repo);
-                Opened::Repository(repo, comments)
+                let (comments, recent) = (Comments::load(&repo), RecentFiles::load(&repo));
+                Opened::Repository(repo, comments, recent)
             }
             Err(_) => Opened::Folder(folder),
         })
@@ -34,7 +36,7 @@ impl Opened {
     /// The root of the repository found, if any.
     pub fn root(&self) -> Option<&Path> {
         match self {
-            Opened::Repository(repo, _) => Some(repo.root()),
+            Opened::Repository(repo, ..) => Some(repo.root()),
             Opened::Folder(_) => None,
         }
     }
@@ -66,7 +68,7 @@ pub struct Offer {
 
 impl Offer {
     /// With nothing `typed`, the `recent` repositories still there. Otherwise those whose names
-    /// hold every word typed, then the folders completing the path typed, which starts at the
+    /// match it, as [`fuzzy::rank`] ranks them, then the folders completing the path typed, which starts at the
     /// home folder unless it is absolute.
     pub fn new(typed: &str, recent: &[PathBuf]) -> Offer {
         let (there, gone): (Vec<PathBuf>, _) = recent.iter().cloned().partition(|root| root.join(".git").exists());
@@ -74,7 +76,7 @@ impl Offer {
         if typed.trim().is_empty() {
             return Offer { choices: recent.collect(), gone };
         }
-        let mut choices: Vec<Choice> = recent.filter(|choice| holds_every_word(&choice.name, typed)).collect();
+        let mut choices = fuzzy::rank(typed, recent.collect(), |choice| &choice.name);
         let typed = if typed == "~" { "~/" } else { typed };
         let (folder, start) = typed.split_at(typed.rfind('/').map_or(0, |slash| slash + 1));
         let mut folders = subfolders(&resolve(folder), start, folder);
@@ -143,7 +145,7 @@ mod tests {
         let inner = fixture.repo.root().join("src");
         fs::create_dir(&inner).unwrap();
 
-        let Ok(Opened::Repository(repo, _)) = Opened::find(&inner) else { panic!("no repository") };
+        let Ok(Opened::Repository(repo, ..)) = Opened::find(&inner) else { panic!("no repository") };
         assert_eq!(repo.root(), fs::canonicalize(fixture.repo.root()).unwrap());
 
         let outside = TempDir::new().unwrap();

@@ -1,5 +1,5 @@
-//! Files the app keeps for itself, outside any repository: in its state folder, or its data
-//! folder where there is no such thing.
+//! Files the app keeps for itself, as JSON. Those outside any repository go in its state folder,
+//! or its data folder where there is no such thing.
 
 use std::fs;
 use std::io;

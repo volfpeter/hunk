@@ -2,8 +2,10 @@
 
 mod action;
 mod app;
+mod browse;
 mod comments;
 mod forge;
+mod fuzzy;
 mod gh;
 mod git;
 mod kept;

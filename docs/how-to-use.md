@@ -42,6 +42,18 @@ Unchanged lines between changes fold into a bar that says how many. The arrows o
 
 Everything updates by itself when the repository changes, so you can read while an agent edits. You stay where you are in the diff, and a comment you're writing is kept. If a file above you joins or leaves the diff, you stay in your file but go back to its start. **Git: Refresh** in the [command palette](#commands) is there in case something was missed.
 
+## Read any file
+
+**Ctrl+P**, or **File: Open a file** in the [command palette](#commands), opens a file of the working tree over the review, whole. Its changes since the last commit show in it, staged or not, so a file you haven't touched is just its code. Type to find a file: the letters only need to come in order, so `apprs` finds `src/app.rs`. With nothing typed, the files you opened last come first, then the changed ones, marked with a dot. **Ctrl+P** again picks another file without leaving.
+
+The full-screen button at the end of a file's header in the diff, or **File: Open app.rs** in the palette for the file at the top, opens that file. In Changes and Staging it opens at the lines you selected.
+
+It shows what is on disk now, whatever the review compares, and updates when the file changes. **Escape** closes it, and the review is as you left it. Opening it again brings back the same file, where you were.
+
+**Alt+←** and **Alt+→**, or the arrows in the file's header, go back and forward through the files you opened, each where you left it.
+
+Files Git ignores aren't offered. To bring some back, like `.env` or generated code, un-ignore them in a `.ignore` file, as ripgrep reads it: a line `!.env`.
+
 ## Comment on code
 
 - **A line:** hover it and press **+**.
@@ -151,10 +163,10 @@ They use your own Git setup, but can't answer prompts: if Git needs a password i
 
 ## Commands
 
-**Ctrl+K** opens a list of everything you can do right now. Each command starts with its topic, such as **Git:** or **View:**. Type to filter, by topic too, use the arrow keys to pick and **Enter** to run the command marked with **›**. Actions on a file act on the one at the top of the diff, and those on a branch or stash on the one selected in the list.
+**Ctrl+K** opens a list of everything you can do right now. Each command starts with its topic, such as **Git:** or **View:**. Type to filter, by topic too, with the letters only needing to come in order, the best match first, use the arrow keys to pick and **Enter** to run the command marked with **›**. Actions on a file act on the one at the top of the diff, and those on a branch or stash on the one selected in the list.
 
 The list also moves through the diff, switches to another view and opens another repository. A command with a key shows it, to use without the list: **]** and **[** go to the next and previous file, **j** and **k** to the next and previous change.
 
-Keys follow a pattern: **Ctrl** with a letter opens something to pick from, like **Ctrl+K**, **Ctrl+O** and **Ctrl+B**, and **Ctrl+Shift** with a letter or arrow runs a Git operation, or copies the open comments with **Ctrl+Shift+C**. **Ctrl+1** to **Ctrl+5** switch to the views in the bar's order, and **Ctrl+0** opens the comments page. In a dialog asking to confirm, **Ctrl+Enter** goes ahead.
+Keys follow a pattern: **Ctrl** with a letter opens something to pick from, like **Ctrl+K**, **Ctrl+O**, **Ctrl+B** and **Ctrl+P**, and **Ctrl+Shift** with a letter or arrow runs a Git operation, or copies the open comments with **Ctrl+Shift+C**. **Ctrl+1** to **Ctrl+5** switch to the views in the bar's order, and **Ctrl+0** opens the comments page. In a dialog asking to confirm, **Ctrl+Enter** goes ahead.
 
 **Ctrl+H**, or the question mark at the far right of the bar, lists every keyboard shortcut, grouped as the palette groups its commands, with a second key where a command has one. It lists them all, including those that do nothing right now, like Push with nothing to send. **Ctrl+H** again, or **Escape**, closes it.

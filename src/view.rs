@@ -1,12 +1,13 @@
 //! The window: a bar to pick what to review, the lists behind that choice, and the diff.
 
-use rune::{Color, Cx, El, Icon, ScrollSpec, TextEdit, TextStyle, Tx, col, icon, row, text};
+use rune::{Color, Cx, El, Icon, ScrollSpec, TextEdit, TextStyle, Tx, col, el, icon, row, text};
 use rune::{Key, KeyEvent, Mods};
 use rune_kit::diff::{Annotation, DiffMode, DiffView, FoldRow};
 use rune_kit::{Badge, Button, ButtonVariant, ControlSize, Dialog, FileNode, IconButton, IconButtonVariant, Kit, RadioGroup, RadioItem, SegmentedControl, Spinner, TextArea, TextInput, Toast, ToastRegion, Tree, TreeItem, TreeModel, TreeStyle, root};
 
 use crate::action::{Action, Integration, Stashed};
-use crate::app::{APPLICATION, COMMENTS, COMMIT, COPY, Command, DRAFT_NOTE, KEYS, Kind, MERGE, PALETTE, PULL, PULL_REQUEST, PUSH, PullRequestOffer, State, Target, copy_label};
+use crate::browse::{BROWSED, BROWSED_SCROLL};
+use crate::app::{APPLICATION, COMMENTS, COMMIT, COPY, Command, DRAFT_NOTE, FILE_PICKER, KEYS, Kind, MERGE, PALETTE, PULL, PULL_REQUEST, PUSH, PullRequestOffer, State, Target, copy_label};
 use crate::comments::{Comment, Group};
 use crate::gh::{PullRequest, Status};
 use crate::open::{Choice, tilde};
@@ -48,6 +49,11 @@ const PULL_REQUEST_MAX_WIDTH: f32 = 200.0;
 const KEYS_COLUMN_WIDTH: f32 = 332.0;
 const KEYS_COLUMN_GAP: f32 = 24.0;
 const KEY_ROW_HEIGHT: f32 = 28.0;
+/// The review showing around the file overlay.
+const BROWSE_MARGIN: f32 = 24.0;
+/// How far into the file overlay its picker sits.
+const FILE_PICKER_TOP: f32 = 8.0;
+const FILE_PICKER_WIDTH: f32 = 640.0;
 
 /// Two points compared, neither leading to the other.
 static COMPARED: Icon = Icon {
@@ -133,6 +139,27 @@ static DELETE_ICON: Icon = Icon {
     body: r#"<path d="M2.5 4H13.5M6.25 4V2.5H9.75V4M4 4L4.75 13.5H11.25L12 4M6.75 6.75V10.75M9.25 6.75V10.75" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" fill="none"/>"#,
 };
 
+/// Full screen: the four corners of a frame.
+static FULL_SCREEN_ICON: Icon = Icon {
+    name: "hunk-full-screen",
+    view: 16.0,
+    body: r#"<path d="M2.5 6V2.5H6M10 2.5H13.5V6M13.5 10V13.5H10M6 13.5H2.5V10" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" fill="none"/>"#,
+};
+
+/// Going back: an arrow to the left.
+static BACK_ICON: Icon = Icon {
+    name: "hunk-back",
+    view: 16.0,
+    body: r#"<path d="M13 8H3M7 4L3 8L7 12" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" fill="none"/>"#,
+};
+
+/// Going forward: an arrow to the right.
+static FORWARD_ICON: Icon = Icon {
+    name: "hunk-forward",
+    view: 16.0,
+    body: r#"<path d="M3 8H13M9 4L13 8L9 12" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" fill="none"/>"#,
+};
+
 /// Where a comment card sits, which decides what it repeats of its surroundings.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum CardPlace {
@@ -165,6 +192,9 @@ pub fn view(s: &State, cx: &mut Cx<State>) -> El {
     cx.time_scale(ANIMATION_SPEED);
     let k = Kit::neutral(cx.system_dark());
     let mut overlays = Vec::new();
+    // Under everything, as it fills the window.
+    browse_overlay(s, &k, &mut overlays);
+    file_picker(s, &k, &mut overlays);
     // Under the confirm for removing a remote.
     remotes_dialog(s, &k, &mut overlays);
     // Under the confirm for aborting.
@@ -688,7 +718,11 @@ fn file_actions(s: &State, k: &Kit, file: usize) -> El {
     let comment = (!s.diff.files()[file].hunks.is_empty()).then(|| {
         Button::new("Comment on file").variant(ButtonVariant::GhostMuted).control_size(ControlSize::Small).on_press_tx(move |s: &mut State, tx: &mut Tx| s.compose_on_file(file, tx)).build(k)
     });
-    row().gap(4.0).items_center().children(stage).children(unstage).children(discard).children(comment)
+    let open = s.worktree_path(file).map(|_| {
+        let open = action_icon(&FULL_SCREEN_ICON, "Open the whole file".to_owned(), false).variant(IconButtonVariant::GhostMuted).control_size(ControlSize::Small);
+        open.on_press_tx(move |s: &mut State, tx: &mut Tx| s.browse_diff_file(file, tx)).build(k)
+    });
+    row().gap(4.0).items_center().children(stage).children(unstage).children(discard).children(comment).children(open)
 }
 
 fn annotated(s: &State, k: &Kit, annotation: &Annotation) -> El {
@@ -1343,6 +1377,128 @@ fn remotes_dialog(s: &State, k: &Kit, overlays: &mut Vec<El>) {
     Dialog::new("remotes", "Remotes").width(PICKER_WIDTH).fit().open(true).on_close(State::close_remotes).child(content).build(k, overlays);
 }
 
+/// The file overlay: one worktree file whole, over the review.
+fn browse_overlay(s: &State, k: &Kit, overlays: &mut Vec<El>) {
+    let browser = &s.browser;
+    if !browser.open {
+        return;
+    }
+    overlays.push(el().key("browse-scrim").absolute(0.0, 0.0).w_full().h_full().fill(k.c.scrim).a11y_hidden());
+    // Until a file is picked, the picker stands alone.
+    if browser.path().is_none() {
+        return;
+    }
+    let content = match &browser.error {
+        Some(error) => col().w_full().grow(1.0).center().gap(12.0).padding(16.0).child(text(error.clone()).font(k.ty.ui).color(k.c.text_muted).wrap_anywhere()).child(browse_actions(s, k)),
+        None if browser.diff.files().is_empty() => col().w_full().grow(1.0),
+        None => {
+            remember_scroll(s);
+            let actions_kit = k.clone();
+            let diff = DiffView::new(|s: &State| &s.browser.diff, |s: &mut State| &mut s.browser.diff).key(BROWSED).fold_row(FoldRow::LineInfo);
+            diff.header_actions(move |s: &State, _| browse_actions(s, &actions_kit)).build(s, k)
+        }
+    };
+    let panel = col()
+        .key("browse-panel")
+        .role("dialog")
+        .label("File")
+        .w_full()
+        .h_full()
+        .min_h(0.0)
+        .radius(8.0)
+        .clip_rounded(8.0)
+        .fill(k.c.bg_base)
+        .border(1.0, k.c.border_base)
+        .child(content)
+        .modal(true, State::close_browser);
+    overlays.push(el().key("browse-layer").absolute(0.0, 0.0).w_full().h_full().padding(BROWSE_MARGIN).child(panel));
+}
+
+/// Back, forward, another file and close, for the file overlay.
+fn browse_actions(s: &State, k: &Kit) -> El {
+    let visit = |glyph: &'static Icon, help: &str, forward: bool| {
+        action_icon(glyph, help.to_owned(), !s.browser.can_go(forward)).on_press(move |s: &mut State| s.browse_visit(forward)).build(k)
+    };
+    let pick = Button::new("Open a file").variant(ButtonVariant::GhostMuted).control_size(ControlSize::Small).shortcut(FILE_PICKER).on_press_tx(State::open_file_picker);
+    let close = action_icon(&rune_kit::glyphs::CLOSE, "Close (Escape)".to_owned(), false).on_press(State::close_browser).build(k);
+    row()
+        .gap(4.0)
+        .items_center()
+        .child(visit(&BACK_ICON, "Back (Alt+←)", false))
+        .child(visit(&FORWARD_ICON, "Forward (Alt+→)", true))
+        .child(pick.build(k))
+        .child(close)
+}
+
+/// Keeps where the file overlay's diff is scrolled to, which its viewport forgets on closing.
+fn remember_scroll(s: &State) {
+    if let (Some(viewport), Some(rows)) = (rune::memo::window_layout(BROWSED_SCROLL), rune::memo::window_layout(&format!("{BROWSED_SCROLL}/rows"))) {
+        s.browser.scrolled.set([viewport[0] - rows[0], viewport[1] - rows[1]]);
+    }
+}
+
+/// Every file of the working tree on offer, the recent and changed ones first, in a card at
+/// the top of the file overlay, over the file's header.
+fn file_picker(s: &State, k: &Kit, overlays: &mut Vec<El>) {
+    let Some(active) = s.browser.picker else { return };
+    let field = TextInput::new(&s.browser.picker_text)
+        .width(None)
+        .placeholder("Find a file by name or path")
+        .label("File")
+        .on_edit(|s: &mut State| &mut s.browser.picker_text)
+        .on_change(|s: &mut State, tx: &mut Tx| {
+            s.rank_files();
+            reveal_row(tx, "picked", "file", s.browser.picker);
+        })
+        .on_submit(|s: &mut State, tx: &mut Tx| s.pick_file(s.browser.picker.unwrap_or_default(), tx))
+        .on_key(|s: &mut State, event: &KeyEvent, tx: &mut Tx| match event.key {
+            Key::Up | Key::Down => {
+                s.browser.move_picker(if event.key == Key::Up { -1 } else { 1 });
+                reveal_row(tx, "picked", "file", s.browser.picker);
+                true
+            }
+            _ if edit_by_word(&mut s.browser.picker_text, event) => {
+                s.rank_files();
+                true
+            }
+            _ => false,
+        });
+    let rows = s.browser.offer.iter().enumerate().map(|(index, path)| file_row(s, k, path, index == active, index));
+    let list = dialog_list("picked").role("listbox").children(rows);
+    let none = if s.browser.walking() { "Looking for files…" } else { "No files match" };
+    let list = if s.browser.offer.is_empty() { list.child(muted(k, none).py(8.0)) } else { list };
+    let escape = if s.browser.path().is_some() { "Escape goes back to the file" } else { "Escape closes" };
+    let hint = text(format!("Enter opens the file, {escape}")).font(k.ty.text_small).color(k.c.text_faint).px(8.0);
+    let mut card = col()
+        .key("file-picker")
+        .role("dialog")
+        .label("Open a file")
+        .w_full()
+        .max_w(FILE_PICKER_WIDTH)
+        .padding(12.0)
+        .gap(10.0)
+        .radius(8.0)
+        .fill(k.c.layer_01)
+        .border(1.0, k.c.border_base)
+        .child(field.build(k))
+        .child(list)
+        .child(hint);
+    for shadow in k.shadow_layers(&k.elevation.overlay) {
+        card = card.box_shadow(shadow);
+    }
+    let card = card.token_motion(k.motion.overlay).modal(true, State::close_file_picker);
+    overlays.push(el().key("file-picker-layer").absolute(0.0, 0.0).w_full().h_full().padding(BROWSE_MARGIN).pt(BROWSE_MARGIN + FILE_PICKER_TOP).center().items_start().child(card));
+}
+
+/// A file in the picker: its name, then its folder, marked when it has changes.
+fn file_row(s: &State, k: &Kit, path: &str, active: bool, index: usize) -> El {
+    let (folder, name) = path.rsplit_once('/').unwrap_or(("", path));
+    let changed = s.overview.files.contains_key(path).then(|| text("•").font(k.ty.ui_medium).color(k.c.text_accent).help("Changed"));
+    let folder = (!folder.is_empty()).then(|| one_line(folder.to_owned()).truncate_head().max_w(PLACE_MAX_WIDTH).font(k.ty.text_small).color(k.c.text_faint));
+    let trailing = row().gap(8.0).items_center().shrink().min_w(0.0).children(folder).children(changed);
+    picker_row(k, format!("file{index}"), name.to_owned(), Some(trailing), active, move |s, tx| s.pick_file(index, tx))
+}
+
 /// Pins the dialog just built to the top of the window, so it holds still as its list shrinks.
 /// Dialog pushes the layer centring its panel last.
 fn pin_to_top(overlays: &mut Vec<El>) {
@@ -1402,6 +1558,7 @@ fn picker_row(k: &Kit, key: String, title: String, trailing: Option<El>, active:
 mod tests {
     use super::*;
     use crate::app::Shell;
+    use crate::browse::RecentFiles;
     use crate::comments::Comments;
     use crate::git::testing::Fixture;
     use crate::open::Opened;
@@ -1409,7 +1566,7 @@ mod tests {
     #[test]
     fn in_a_multi_line_field_enter_starts_a_line_and_ctrl_enter_saves() {
         let fixture = Fixture::new();
-        let mut state = State::new(Some(Opened::Repository(fixture.repo.clone(), Comments::load(&fixture.repo))), Shell::default());
+        let mut state = State::new(Some(Opened::Repository(fixture.repo.clone(), Comments::load(&fixture.repo), RecentFiles::default())), Shell::default());
         state.draft_text = TextEdit::new("one".to_owned());
         let press = |mods| KeyEvent { key: Key::Enter, mods };
         let text: for<'a> fn(&'a mut State) -> &'a mut TextEdit = |s| &mut s.draft_text;

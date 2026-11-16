@@ -8,13 +8,15 @@ use std::rc::Rc;
 use std::time::Duration;
 
 use rune::{Key, KeyEvent, Latest, TextEdit, Tx, Waker};
-use rune_kit::diff::{Annotation, DiffMode, DiffState, FileDiff, LineRange, LineRef};
+use rune_kit::diff::{Annotation, DiffMode, DiffState, FileDiff, LineRange, LineRef, Side};
 use rune_kit::{FileNode, FileTree, TreeModel};
 use serde::{Deserialize, Serialize};
 
 use crate::action::{Action, Integration, Stashed};
+use crate::browse::{BROWSED_SCROLL, Browser, RecentFiles};
 use crate::comments::{Anchor, Comment, Comments, Group, prompt};
 use crate::forge::Hosted;
+use crate::fuzzy;
 use crate::gh::{self, PullRequest};
 use crate::git::{Repo, Result};
 use crate::open::{Choice, Offer, Opened, resolve};
@@ -179,6 +181,7 @@ const FETCH: &str = "Ctrl+Shift+F";
 pub const COPY: &str = "Ctrl+Shift+C";
 pub const MERGE: &str = "Ctrl+Shift+M";
 pub const PULL_REQUEST: &str = "Ctrl+Shift+R";
+pub const FILE_PICKER: &str = "Ctrl+P";
 /// The key of each view of the repository, in the order of `Kind::ALL`.
 const VIEWS: [&str; 5] = ["Ctrl+1", "Ctrl+2", "Ctrl+3", "Ctrl+4", "Ctrl+5"];
 pub const COMMENTS: &str = "Ctrl+0";
@@ -320,6 +323,7 @@ pub struct State {
     /// The branch the current one grew from, the base of its new pull request.
     head_parent_load: Latest<(ForgeBranch, Result<String>)>,
     watch: Option<RepoWatch>,
+    pub browser: Browser,
     pub shell: Shell,
 }
 
@@ -333,10 +337,10 @@ impl State {
         let (mut diff, mut comment_sheet) = (DiffState::default(), DiffState::default());
         diff.set_mode(layout);
         comment_sheet.set_mode(layout);
-        let (repo, comments, not_repository) = match opened {
-            Some(Opened::Repository(repo, comments)) => (Some(repo), comments, None),
-            Some(Opened::Folder(folder)) => (None, Comments::default(), Some(folder)),
-            None => (None, Comments::default(), None),
+        let (repo, comments, recent_files, not_repository) = match opened {
+            Some(Opened::Repository(repo, comments, recent_files)) => (Some(repo), comments, recent_files, None),
+            Some(Opened::Folder(folder)) => (None, Comments::default(), RecentFiles::default(), Some(folder)),
+            None => (None, Comments::default(), RecentFiles::default(), None),
         };
         let mut state = State {
             repo,
@@ -391,6 +395,7 @@ impl State {
             creating_pull_request: false,
             head_parent_load: Latest::default(),
             watch: None,
+            browser: Browser::new(recent_files),
             shell,
         };
         state.rebuild_sheet();
@@ -433,7 +438,11 @@ impl State {
         let pull_requests = self.pull_request_load.take();
         let head_parent = self.head_parent_load.take();
         let (repo_changed, watch_failure) = self.watch.as_ref().map_or((false, None), RepoWatch::take);
-        let landed = opened_landed || offer.is_some() || overview.is_some() || patch.is_some() || comments || action.is_some() || pull_requests.is_some() || head_parent.is_some() || watch_failure.is_some();
+        let (browsed, walked) = self.browser.poll(tx);
+        if walked {
+            self.rank_files();
+        }
+        let landed = opened_landed || offer.is_some() || overview.is_some() || patch.is_some() || comments || action.is_some() || pull_requests.is_some() || head_parent.is_some() || watch_failure.is_some() || browsed;
         self.pull_requests.extend(pull_requests.into_iter().flatten());
         if let Some(offer) = offer {
             self.show_offer(offer);
@@ -492,6 +501,16 @@ impl State {
             }
             return true;
         }
+        if self.browser.open && self.browser.picker.is_none() && event.mods.alt && !event.mods.cmd && !event.mods.shift && matches!(event.key, Key::Left | Key::Right) {
+            self.browse_visit(event.key == Key::Right);
+            return true;
+        }
+        if event.is_command('p') {
+            if self.browser.picker.is_none() && (self.browser.open || !self.dialog_open()) {
+                self.open_file_picker(tx);
+            }
+            return true;
+        }
         if event.is_command('o') {
             if !self.dialog_open() {
                 self.open_opener();
@@ -508,9 +527,15 @@ impl State {
         self.active_diff().key(event, tx)
     }
 
-    /// The diff on screen: the review's, or the comments page.
+    /// The diff on screen: the file overlay's, the review's, or the comments page.
     fn active_diff(&mut self) -> &mut DiffState {
-        if self.showing_comments { &mut self.comment_sheet } else { &mut self.diff }
+        if self.browser.open {
+            &mut self.browser.diff
+        } else if self.showing_comments {
+            &mut self.comment_sheet
+        } else {
+            &mut self.diff
+        }
     }
 
     /// Runs the command whose key is `shortcut`, if it is on offer.
@@ -624,11 +649,13 @@ impl State {
         }
     }
 
-    /// Reads the repository again, then the review on screen, and finds comments' code again.
+    /// Reads the repository again, then the review on screen and the file overlay's file, and
+    /// finds comments' code again.
     pub fn refresh(&mut self) {
         let Some(repo) = &self.repo else { return };
         self.overview_load.request(repo.clone(), |repo| Overview::load(&repo));
         self.comments.follow_code(repo);
+        self.browser.reload(repo);
     }
 
     pub fn select_kind(&mut self, kind: Kind) {
@@ -1429,6 +1456,89 @@ impl State {
         }
     }
 
+    /// Opens the file picker, over the file overlay, which opens too.
+    pub fn open_file_picker(&mut self, tx: &mut Tx) {
+        let Some(root) = self.repo.as_ref().map(|repo| repo.root().to_owned()) else { return };
+        self.show_browser(tx);
+        self.browser.picker_text = TextEdit::default();
+        self.browser.picker = Some(0);
+        self.browser.walk(root);
+        self.focus(|s| &mut s.browser.picker_text);
+        self.rank_files();
+    }
+
+    /// Closes the file picker, and the overlay with it when it has no file to show.
+    pub fn close_file_picker(&mut self) {
+        self.browser.picker = None;
+        if self.browser.path().is_none() {
+            self.browser.open = false;
+        }
+    }
+
+    pub fn close_browser(&mut self) {
+        self.browser.open = false;
+        self.browser.picker = None;
+    }
+
+    /// Fills the file picker for what is typed into it.
+    pub fn rank_files(&mut self) {
+        let mut changed: Vec<&str> = self.overview.files.keys().map(String::as_str).collect();
+        changed.sort_unstable();
+        self.browser.rank(&changed);
+    }
+
+    /// Shows the file on row `row` of the file picker in the overlay.
+    pub fn pick_file(&mut self, row: usize, tx: &mut Tx) {
+        let Some(path) = self.browser.offer.get(row).cloned() else { return };
+        self.browser.picker = None;
+        self.browse(path, None, tx);
+    }
+
+    /// The path the diff's file `file` has in the working tree, unless it was deleted.
+    pub fn worktree_path(&self, file: usize) -> Option<&str> {
+        self.diff.files().get(file)?.new_path.as_deref()
+    }
+
+    /// Shows the diff's file `file` whole in the overlay, at the lines selected in it where the
+    /// diff's lines are the overlay's: in Changes both sides, in Staging the new one.
+    pub fn browse_diff_file(&mut self, file: usize, tx: &mut Tx) {
+        let Some(path) = self.worktree_path(file).map(str::to_owned) else { return };
+        let same_lines = |lines: &LineRange| match self.shown_review() {
+            Some(Review::Changes) => true,
+            Some(Review::Unstaged) => lines.start.side == Side::New && lines.end.side == Side::New,
+            _ => false,
+        };
+        let reveal = self.diff.selection().filter(|lines| lines.file == file && same_lines(lines));
+        self.browse(path, reveal, tx);
+    }
+
+    /// Shows the file visited after the one in the overlay, or before it.
+    pub fn browse_visit(&mut self, forward: bool) {
+        if let Some(repo) = &self.repo {
+            self.browser.go(repo, forward);
+        }
+    }
+
+    fn browse(&mut self, path: String, reveal: Option<LineRange>, tx: &mut Tx) {
+        let Some(repo) = &self.repo else { return };
+        self.browser.show(repo, path, reveal);
+        self.show_browser(tx);
+    }
+
+    /// Opens the file overlay where it was left, with its file read again.
+    fn show_browser(&mut self, tx: &mut Tx) {
+        if self.browser.open {
+            return;
+        }
+        self.palette = None;
+        self.browser.open = true;
+        let [x, y] = self.browser.scrolled.get();
+        tx.scroll_to_instant(BROWSED_SCROLL, x, y);
+        if let Some(repo) = &self.repo {
+            self.browser.reload(repo);
+        }
+    }
+
     pub fn open_palette(&mut self) {
         self.palette_text = TextEdit::default();
         self.palette = Some(0);
@@ -1455,15 +1565,10 @@ impl State {
         commands
     }
 
-    /// What the palette offers for what has been typed into it.
+    /// What the palette offers for what has been typed into it, as [`fuzzy::rank`] ranks it.
     pub fn palette_commands(&self) -> Vec<Command> {
-        let typed = self.palette_text.text.to_lowercase();
-        let mut commands = self.commands();
-        commands.retain(|command| {
-            let title = command.title().to_lowercase();
-            typed.split_whitespace().all(|word| title.contains(word))
-        });
-        commands
+        let titled = self.commands().into_iter().map(|command| (command.title(), command)).collect();
+        fuzzy::rank(&self.palette_text.text, titled, |(title, _)| title).into_iter().map(|(_, command)| command).collect()
     }
 
     /// Moves the palette's highlight by `rows`, stopping at the ends.
@@ -1623,8 +1728,10 @@ impl State {
         };
         offer(true, Command::new("View", layout, move |s, _| s.set_layout(other)).shortcut(LAYOUT));
 
+        offer(true, Command::new("File", "Open a file", State::open_file_picker).shortcut(FILE_PICKER));
         if !self.showing_comments {
             let name = self.diff.files().get(file).and_then(|diff| diff.path().rsplit('/').next()).unwrap_or_default();
+            offer(self.worktree_path(file).is_some(), Command::new("File", format!("Open {name}"), |s, tx| s.browse_diff_file(s.diff.visible_file(), tx)));
             offer(idle && !self.stageable(file).is_empty(), Command::new("File", format!("Stage {name}"), |s, _| s.stage_file(s.diff.visible_file())));
             offer(idle && !self.unstageable(file).is_empty(), Command::new("File", format!("Unstage {name}"), |s, _| s.unstage_file(s.diff.visible_file())));
             offer(idle && !self.discardable(file).is_empty(), Command::new("File", format!("Discard {name}"), |s, _| s.ask_to_discard(s.diff.visible_file())));
@@ -1658,7 +1765,7 @@ impl State {
     }
 
     fn dialog_open(&self) -> bool {
-        let pickers = self.switcher.is_some() || self.merger.is_some() || self.shell.opener.is_some();
+        let pickers = self.switcher.is_some() || self.merger.is_some() || self.shell.opener.is_some() || self.browser.open;
         let dialogs = self.deleting.is_some() || self.deleting_group.is_some() || self.confirming.is_some() || self.committing || self.stashing.is_some() || self.managing_remotes || self.action_failure.is_some() || self.showing_keys;
         pickers || dialogs
     }
@@ -1679,6 +1786,7 @@ impl State {
         self.pull_request_load.set_waker(waker.clone());
         self.head_parent_load.set_waker(waker.clone());
         self.comments.set_waker(waker.clone());
+        self.browser.set_waker(waker.clone());
         self.watch = Some(RepoWatch::start(repo, waker));
         self.refresh();
     }
@@ -1704,7 +1812,7 @@ impl State {
 
     /// Gives the keyboard to one text field, which takes it from every other.
     fn focus(&mut self, field: fn(&mut State) -> &mut TextEdit) {
-        let fields = [&mut self.draft_text, &mut self.edit_text, &mut self.commit_text, &mut self.stash_text, &mut self.branch_text, &mut self.remote_name_text, &mut self.remote_url_text, &mut self.merge_text, &mut self.palette_text, &mut self.shell.open_text];
+        let fields = [&mut self.draft_text, &mut self.edit_text, &mut self.commit_text, &mut self.stash_text, &mut self.branch_text, &mut self.remote_name_text, &mut self.remote_url_text, &mut self.merge_text, &mut self.palette_text, &mut self.shell.open_text, &mut self.browser.picker_text];
         for text in fields {
             text.focused = false;
         }
@@ -1931,7 +2039,7 @@ mod tests {
 
     fn state() -> (Fixture, State) {
         let fixture = Fixture::new();
-        let state = State::new(Some(Opened::Repository(fixture.repo.clone(), Comments::load(&fixture.repo))), Shell::default());
+        let state = State::new(Some(Opened::Repository(fixture.repo.clone(), Comments::load(&fixture.repo), RecentFiles::default())), Shell::default());
         (fixture, state)
     }
 
@@ -2380,7 +2488,7 @@ mod tests {
         state.shell.open_text = TextEdit::new("~/elsewhere".to_owned());
         let other = Fixture::new();
 
-        state.show_opened(Opened::Repository(other.repo.clone(), Comments::load(&other.repo)));
+        state.show_opened(Opened::Repository(other.repo.clone(), Comments::load(&other.repo), RecentFiles::default()));
 
         assert_eq!(state.repo.as_ref().map(Repo::root), Some(other.repo.root()));
         assert_eq!((state.kind, state.showing_comments, state.diff.files().len()), (Kind::Commits, false, 0));

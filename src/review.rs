@@ -105,6 +105,21 @@ impl Review {
     }
 }
 
+/// What [`Review::Changes`] shows of the worktree's file `path`, each change whole: nothing when
+/// it is unchanged or ignored.
+pub fn file_changes(repo: &Repo, path: &str) -> Result<String> {
+    let base = match repo.head_commit()? {
+        Some(commit) => commit,
+        None => empty_tree(repo)?,
+    };
+    let paths = [path.to_owned()];
+    let patch = repo.run_on(&["diff", "--no-ext-diff", WHOLE_FILE, &base], &paths)?;
+    if !patch.is_empty() || repo.run_on(&["ls-files", "--others", "--exclude-standard"], &paths)?.is_empty() {
+        return Ok(patch);
+    }
+    repo.run_accepting(&["diff", "--no-ext-diff", "--no-index", "--", "/dev/null", path], &[1])
+}
+
 /// The branch the local branch `branch` most likely grew from: of the other local branches and
 /// `fallback`, the one it has the fewest commits beyond. Ties go to `fallback`, then to the
 /// branch fewest commits ahead. Branches that grew from `branch` don't count.

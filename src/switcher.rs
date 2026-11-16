@@ -1,5 +1,6 @@
 //! Switching branches: what the branch switcher offers for what is typed.
 
+use crate::fuzzy;
 use crate::overview::{Entry, RemoteBranch};
 
 /// Something the switcher offers.
@@ -19,8 +20,8 @@ pub struct BranchOffer {
 }
 
 impl BranchOffer {
-    /// The branches whose names hold every word `typed`, ignoring case, and a new branch named
-    /// `typed` when no branch has that name and git could take it as one.
+    /// The branches matching `typed`, and a new branch named `typed` when no branch has that
+    /// name and git could take it as one.
     pub fn new(typed: &str, local: &[Entry], remote: &[RemoteBranch]) -> BranchOffer {
         let BranchOffer { mut choices } = BranchOffer::existing(typed, local, remote);
         let name = typed.trim();
@@ -31,18 +32,13 @@ impl BranchOffer {
         BranchOffer { choices }
     }
 
-    /// The branches whose names hold every word `typed`, ignoring case.
+    /// The branches matching `typed`, as [`fuzzy::rank`] ranks them, local ones first.
     pub fn existing(typed: &str, local: &[Entry], remote: &[RemoteBranch]) -> BranchOffer {
-        let local_matches = local.iter().filter(|branch| holds_every_word(&branch.id, typed)).cloned().map(BranchChoice::Local);
-        let remote_matches = remote.iter().filter(|branch| holds_every_word(&branch.id(), typed)).cloned().map(BranchChoice::Remote);
+        let local_matches = fuzzy::rank(typed, local.to_vec(), |branch| &branch.id).into_iter().map(BranchChoice::Local);
+        let remote = remote.iter().map(|branch| (branch.id(), branch.clone())).collect();
+        let remote_matches = fuzzy::rank(typed, remote, |(id, _)| id).into_iter().map(|(_, branch)| BranchChoice::Remote(branch));
         BranchOffer { choices: local_matches.chain(remote_matches).collect() }
     }
-}
-
-/// Whether `name` holds every word of `typed`, ignoring case.
-pub fn holds_every_word(name: &str, typed: &str) -> bool {
-    let name = name.to_lowercase();
-    typed.split_whitespace().all(|word| name.contains(&word.to_lowercase()))
 }
 
 #[cfg(test)]

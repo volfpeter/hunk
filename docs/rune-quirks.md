@@ -37,6 +37,7 @@ Check with a long string without spaces, in a narrow window.
 ## Scrolling
 
 - A scroll viewport that unmounts forgets its offset. `on_scroll_offset` reports it but can't change state, so keep it in a `Cell` and put it back with `Tx::scroll_to_instant` when the viewport returns.
+- A component's own viewport, like `DiffView`'s, takes no `on_scroll_offset`. Read the offset in the view instead, as the viewport's `memo::window_layout` minus its content's. `memo::layout` won't do: it ignores scrolling.
 
 ## The diff
 

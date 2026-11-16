@@ -47,6 +47,25 @@ Everything the app does, to try at your own pace. A tick means Peter tried it an
 - [ ] Collapse a file
 - [ ] Show the unchanged lines around changes: 20 more from an arrow or the count, all of them with Shift
 
+## Files
+
+- [ ] Ctrl+P, or File: Open a file in the palette, opens any working-tree file whole in an overlay over the review
+- [ ] Its staged and unstaged changes show in it, together; an unchanged file is just its code, a new one all added
+- [ ] Always unified, whatever the review's layout
+- [ ] Type to find a file, letters in order but not together (`apprs` finds `src/app.rs`)
+- [ ] With nothing typed: the last files opened first, then the changed ones, marked with a dot, then the rest
+- [ ] The last 20 files opened are remembered per repository, across restarts
+- [ ] Ctrl+P in the overlay, or Open a file in its header, picks another file without closing it
+- [ ] Escape on the picker goes back to the file shown; with none, it closes the overlay too
+- [ ] Escape, or ×, closes the overlay, the review untouched; opening it again shows the same file where you were
+- [ ] The full-screen icon at the end of a file's header in the diff, or File: Open <name> in the palette, opens that file, at the selected lines in Changes and Staging
+- [ ] The file updates when it changes on disk, keeping your place
+- [ ] Ignored files aren't offered, but `.ignore` brings them back (`!.env`)
+- [ ] j / k and ] / [ move through its changes
+- [ ] Alt+← / Alt+→, or the arrows in the header, go back and forward through the files opened, each where you left it
+- [ ] Picking a file after going back drops the ones ahead, as a browser does
+- [ ] The picker is a card at the top of the overlay, without a title or a second dimming; with no file yet, it stands alone over the review
+
 ## Comments
 
 - [ ] Comment on a line
@@ -157,6 +176,7 @@ Everything the app does, to try at your own pace. A tick means Peter tried it an
 
 - [ ] Ctrl+K opens the palette, with what's possible right now
 - [ ] Filter by typing, pick with the arrow keys, run with Enter
+- [ ] Typing matches letters in order but not together, best match first, in the palette, the branch switcher, the merge dialog and the open dialog
 - [ ] Commands are grouped by topic, and typing a topic filters to it
 - [ ] File commands act on the file at the top of the diff
 - [ ] Next and previous file and hunk from the palette, showing their keys

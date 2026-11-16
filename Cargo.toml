@@ -6,7 +6,9 @@ license = "MIT"
 
 [dependencies]
 dirs = "7.0.0"
+ignore = "0.4.34"
 notify = "8.2.1"
+nucleo-matcher = "0.3.1"
 rune = { git = "https://github.com/anomalyco/rune", rev = "631e8a67cb3c40225efa3f6c4f57b80e7b18f190" }
 rune-kit = { git = "https://github.com/anomalyco/rune", rev = "631e8a67cb3c40225efa3f6c4f57b80e7b18f190" }
 serde = { version = "1", features = ["derive"] }

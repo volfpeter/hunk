@@ -1,6 +1,6 @@
 # 0001: Approach
 
-Status: step 6's spike done, waiting for Peter to confirm the code view's base. Steps 4h and 4j wait for Peter's UI review, step 4i for him to try the install on Linux and a macOS user's turn, and step 4g's `s` / `u` is still open. See [Tasks](#tasks).
+Status: step 6 done, waiting for Peter's UI review. Steps 4h and 4j wait for Peter's UI review, step 4i for him to try the install on Linux and a macOS user's turn, and step 4g's `s` / `u` is still open. See [Tasks](#tasks).
 
 ## Intent
 
@@ -361,42 +361,46 @@ Tasks:
 - [x] Act on many comments at once: resolve all, delete outdated, delete resolved, delete all
 - [x] Open or create the current branch's pull request from any view, with a key, pushing first
 
-### Step 6: Code overlay
+### Step 6: File overlay
 
 Something in the diff raises a question: where does this come from, where else is it used, how does the rest of the code do it. Answering means reading code outside the diff, then getting back to the review. Exploring is the goal. Small edits would be a bonus, later.
 
 Keep in mind:
 
-- **An overlay, not a view.** Nearly full screen, opened when needed. The bar holds comparisons, and this compares nothing (the Comments page lesson). The diff under it doesn't move, so closing the overlay is the way back. The overlay keeps its state between openings: the file, the scroll, the open folders. Closing unmounts its scroll viewport, which forgets its offset, so the overlay keeps the offset itself and puts it back on opening (see `docs/rune-quirks.md`). `Dialog` has only a fixed height or its content's, so the overlay is a layer of our own, modal as `Dialog`'s, which brings Escape.
+- **An overlay, not a view.** Nearly full screen, opened when needed. The bar holds comparisons, and this compares nothing (the Comments page lesson). The diff under it doesn't move, so closing the overlay is the way back. The overlay keeps its state between openings: the file and the scroll. Closing unmounts its scroll viewport, which forgets its offset, so the overlay keeps the offset itself and puts it back on opening (see `docs/rune-quirks.md`). `Dialog` has only a fixed height or its content's, so the overlay is a layer of our own, modal as `Dialog`'s, which brings Escape.
 - **The working tree only**, whatever the review compares. It never passes for a branch's, a commit's or a stash's version.
-- **Ctrl+P is the main way around**: it opens the overlay with a fuzzy file picker on top, and Escape leaves the overlay showing the last file. One key opens both, and it is a picker key by step 4g's rules. Step 4g had reserved Ctrl+P for picking a file in the diff, but the file list already does that.
+- **A file shows as a diff, whole and unified.** Peter's call, over the spike's own code view: `DiffView` already highlights, selects, copies and holds annotations, and it shows what changed. The changes are against `HEAD`, staged and unstaged together, as Changes shows them, but unfolded. An unchanged file shows whole with nothing marked, and a new file as all added. Unified always, as this is for reading code, not comparing it. No folder tree beside it: the width is the diff's.
+- **Ctrl+P is the main way around**: it opens the overlay with a file picker on top, and in the overlay picks another file. Escape leaves the overlay showing the last file, and with no file yet, closes it. With nothing typed, the picker offers the files opened last, then the changed ones. Typing searches every file, the changed ones first among equal matches. A picker key by step 4g's rules.
+- **Recent files**: the last 20 opened, newest first, kept per repository in `<git-dir>/hunk/` beside the comments.
+- **Ignored files stay out**, but `.ignore` can bring some back: ripgrep's `ignore` crate walks the working tree, reading `.gitignore`, `.ignore`, `.git/info/exclude` and the global excludes file together. Peter often wants some ignored files, such as generated code or `.env`. Git doesn't know `.ignore`, so the walk is the reason for the dependency. Hidden files are on offer, `.git` isn't.
+- **Fuzzy matching everywhere a list filters by typing**: the palette, the branch switcher, the open dialog and the file picker, best match first, ignoring case. `nucleo-matcher` (Helix's) does it, with no dependencies of its own worth mentioning; the words-anywhere match it replaces was weak for paths.
 - **Opening from the diff** opens the diff's top file, at the selected lines if any. Lines match only where the diff's right side is the working tree (Changes, Staging). Elsewhere it opens at the top, rather than at a line that may hold other code.
-- **Ignored files stay out**, of the tree and the picker alike. Ignored means what git says, `.git/info/exclude` and the global excludes file included. Bringing some back through `.ignore` overrides waits for later.
-- **The code view is ours**, since Rune has none: a virtual row per line, as `DiffView` builds them, each line selectable text in one selection group, its number stuck to the left as it scrolls sideways. Proposed by the spike, Peter to confirm, since it gives up the caret. The spike (`research/code-view`) tried it against one `text_input` holding the whole file, which gives a caret, keyboard selection and an editor later, and stays read-only by putting the text back after an edit. But the field lays out the whole file on the UI thread at every open and every reload, a quarter of a second for 5,000 lines and growing with the file, and agents' edits reload it all day. Rows open in the same time whatever the file's length, and scroll at full speed. They select with the mouse across lines and copy, but have no caret, so no keyboard selection, and select all reaches only the rows built. Editing, when it comes, means an editor of our own, or a field over just the lines being edited.
-- **Highlighting**: Rune colours only a source's first 128 KiB and 32,768 ranges. Highlighting 128 lines at a time, as `DiffView` does, colours a whole file, in about 10 ms for 6,700 lines. A string or comment crossing a chunk's border is coloured wrong after it. The built-in languages are about 80, the common ones. `tree-sitter-highlight` would add languages, and get strings and comments right across chunk borders, at the cost of building C grammars. Worth it only once missing languages hurt, and then for the diff too (`DiffView::set_highlighter`).
 - **Agents edit while Peter reads**: the open file reloads when it changes on disk, and the view holds its place.
-- **Back and forward** over the places visited is something to try. Peter can't tell whether he wants it until he uses it.
+- **Back and forward** over the places visited is something to try. Peter can't tell whether he wants it until he uses it. A place is a file and where it was scrolled to; moving within a file isn't one. Alt+← and Alt+→, as browsers have them, and arrows in the file's header. Picking a file drops the places ahead, as a browser does.
+- **The picker is a card docked at the top of the overlay**, over the file's header: a field, the files, a line of help. A `Dialog` on the overlay stacked a second scrim, a title and a close button on a panel that already had them. With no file yet, the card stands alone over the review, as the palette does.
+
+Built: the overlay is `DiffView` over a patch of the whole file, made by `git diff` against `HEAD` with full context and never folded, so one hunk holds every line. An unchanged file gets the same shape from a patch the app writes, as Rune's `Line` can't be built outside it. The walk runs each time the picker opens, so nothing has to keep it fresh; the picker lists at most 100 files. The overlay counts as a dialog: git keys and the palette wait until it closes, and `j` / `k` move through its changes. The file reloads with every refresh, so a file only `.ignore` brings back doesn't reload by itself, as the watcher skips ignored paths. A file Git tracks but `.gitignore` matches isn't offered, unlike in git. An unchanged file still shows both line-number columns.
 
 Tasks:
 
-- [x] Spike the code view in `research/`, recording the answers here and traps in `docs/rune-quirks.md`: read-only with a caret and selection, no wrapping with sideways scrolling, line numbers, highlighting past 32 KiB, a 5,000-line file at full speed, and a nearly full-screen overlay (`Dialog` doesn't scroll content taller than the window)
-- [ ] Open the diff's file in the overlay with highlighting, at the selected lines in Changes and Staging, and close it back to the review untouched
-- [ ] Pick any working-tree file with Ctrl+P
-- [ ] Folder tree beside the code
-- [ ] Reload the open file when it changes on disk, keeping the view's place
-- [ ] Go back and forward through the places visited
+- [x] Spike the code view in `research/` (it settled on rows of our own, then Peter chose the diff)
+- [x] Fuzzy matching with `nucleo-matcher` wherever a list filters by typing
+- [x] Ctrl+P picks any working-tree file, recent and changed ones first, and shows it whole in the overlay with its changes; Ctrl+P there switches files
+- [x] Remember the last 20 files opened, per repository
+- [x] Reload the open file when it changes on disk, keeping the view's place
+- [x] Open the diff's file in the overlay, at the selected lines in Changes and Staging
+- [x] Go back and forward through the places visited
 
 ### Later
 
-Order open, plan each when it comes up: reviewing pull requests on GitHub and Forgejo/Gitea, worktrees (below), the code overlay's follow-ups (below), commit graph, hunk and line staging.
+Order open, plan each when it comes up: reviewing pull requests on GitHub and Forgejo/Gitea, worktrees (below), the file overlay's follow-ups (below), commit graph, hunk and line staging.
 
-### Later: Code overlay
+### Later: File overlay
 
 Each builds on step 6.
 
-- **Search the working tree**, with results as file:line rows that open in the overlay. `git grep --untracked` searches what the overlay shows. With `.ignore` overrides it no longer would, so search moves to ripgrep's `grep` crate then.
-- **`.ignore` overrides**: an ignored file or folder shows again when a `.ignore` file un-ignores it (`!dist/`), as ripgrep reads them. Peter often wants some ignored files, such as generated code or `.env`. Git doesn't know `.ignore`, so the tree, the picker and search walk the folders with ripgrep's `ignore` crate, which reads `.gitignore` and `.ignore` together. That crate is the reason for the dependency.
-- **Comments in the overlay**, only where the code still matches: step 2's re-anchoring finds a comment's code again in a file. `TextArea` has no slot for cards the way `DiffView` has annotations, so that likely means a marker on the line that opens the comment.
+- **Search the working tree**, with results as file:line rows that open in the overlay. ripgrep's `grep` crate searches what the overlay offers, `.ignore` overrides included, which `git grep` wouldn't.
+- **Comments in the overlay**, only where the code still matches: the overlay shows what Changes shows of a file, so a comment there could belong to Changes, and step 2's re-anchoring finds a comment's code again. `DiffView` holds annotations, so the cards come as in the review.
 - **Small edits**: binding the editor, saving, and a choice when an agent changes a file that has unsaved edits.
 - **LSP** for go to definition and find references (diffle's `lsp/` is the reference, about 3,700 lines on tokio). Correct only on the working tree, which is all the overlay shows. A provider that turns a word into file:line rows would let a grep-based guess come first, with LSP behind the same rows later.
 
