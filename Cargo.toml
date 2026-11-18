@@ -9,8 +9,8 @@ dirs = "7.0.0"
 ignore = "0.4.34"
 notify = "8.2.1"
 nucleo-matcher = "0.3.1"
-rune = { git = "https://github.com/anomalyco/rune", rev = "631e8a67cb3c40225efa3f6c4f57b80e7b18f190" }
-rune-kit = { git = "https://github.com/anomalyco/rune", rev = "631e8a67cb3c40225efa3f6c4f57b80e7b18f190" }
+rune = { git = "https://github.com/anomalyco/rune", rev = "78efd4a7876b5478dd72033ce6fd2b2f13ab9f9a" }
+rune-kit = { git = "https://github.com/anomalyco/rune", rev = "78efd4a7876b5478dd72033ce6fd2b2f13ab9f9a" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 
@@ -19,8 +19,8 @@ tempfile = "3"
 
 # Rune builds against its own patched copies of these; a dependency's `[patch]` doesn't reach us.
 [patch.crates-io]
-wgpu-hal = { git = "https://github.com/anomalyco/rune", rev = "631e8a67cb3c40225efa3f6c4f57b80e7b18f190" }
-winit = { git = "https://github.com/anomalyco/rune", rev = "631e8a67cb3c40225efa3f6c4f57b80e7b18f190" }
-parley_engine = { git = "https://github.com/anomalyco/rune", rev = "631e8a67cb3c40225efa3f6c4f57b80e7b18f190" }
-accesskit_windows = { git = "https://github.com/anomalyco/rune", rev = "631e8a67cb3c40225efa3f6c4f57b80e7b18f190" }
-accesskit_macos = { git = "https://github.com/anomalyco/rune", rev = "631e8a67cb3c40225efa3f6c4f57b80e7b18f190" }
+wgpu-hal = { git = "https://github.com/anomalyco/rune", rev = "78efd4a7876b5478dd72033ce6fd2b2f13ab9f9a" }
+winit = { git = "https://github.com/anomalyco/rune", rev = "78efd4a7876b5478dd72033ce6fd2b2f13ab9f9a" }
+parley_engine = { git = "https://github.com/anomalyco/rune", rev = "78efd4a7876b5478dd72033ce6fd2b2f13ab9f9a" }
+accesskit_windows = { git = "https://github.com/anomalyco/rune", rev = "78efd4a7876b5478dd72033ce6fd2b2f13ab9f9a" }
+accesskit_macos = { git = "https://github.com/anomalyco/rune", rev = "78efd4a7876b5478dd72033ce6fd2b2f13ab9f9a" }

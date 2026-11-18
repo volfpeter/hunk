@@ -56,7 +56,7 @@ Everything the app does, to try at your own pace. A tick means Peter tried it an
 - [ ] With nothing typed: the last files opened first, then the changed ones, marked with a dot, then the rest
 - [ ] The last 20 files opened are remembered per repository, across restarts
 - [ ] Ctrl+P in the overlay, or Open a file in its header, picks another file without closing it
-- [ ] Escape on the picker goes back to the file shown; with none, it closes the overlay too
+- [ ] Escape on the picker goes back to the file shown in the overlay; on its own, it closes
 - [ ] Escape, or ×, closes the overlay, the review untouched; opening it again shows the same file where you were
 - [ ] The full-screen icon at the end of a file's header in the diff, or File: Open <name> in the palette, opens that file, at the selected lines in Changes and Staging
 - [ ] The file updates when it changes on disk, keeping your place
@@ -64,7 +64,7 @@ Everything the app does, to try at your own pace. A tick means Peter tried it an
 - [ ] j / k and ] / [ move through its changes
 - [ ] Alt+← / Alt+→, or the arrows in the header, go back and forward through the files opened, each where you left it
 - [ ] Picking a file after going back drops the ones ahead, as a browser does
-- [ ] The picker is a card at the top of the overlay, without a title or a second dimming; with no file yet, it stands alone over the review
+- [ ] The picker is a card at the top of the overlay, without a title or a second dimming; opened with the overlay closed, it stands alone over the review
 
 ## Comments
 

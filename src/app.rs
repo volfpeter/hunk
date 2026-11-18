@@ -507,7 +507,7 @@ impl State {
         }
         if event.is_command('p') {
             if self.browser.picker.is_none() && (self.browser.open || !self.dialog_open()) {
-                self.open_file_picker(tx);
+                self.open_file_picker();
             }
             return true;
         }
@@ -1456,10 +1456,10 @@ impl State {
         }
     }
 
-    /// Opens the file picker, over the file overlay, which opens too.
-    pub fn open_file_picker(&mut self, tx: &mut Tx) {
+    /// Opens the file picker, over the file overlay when it is open.
+    pub fn open_file_picker(&mut self) {
         let Some(root) = self.repo.as_ref().map(|repo| repo.root().to_owned()) else { return };
-        self.show_browser(tx);
+        self.palette = None;
         self.browser.picker_text = TextEdit::default();
         self.browser.picker = Some(0);
         self.browser.walk(root);
@@ -1467,12 +1467,8 @@ impl State {
         self.rank_files();
     }
 
-    /// Closes the file picker, and the overlay with it when it has no file to show.
     pub fn close_file_picker(&mut self) {
         self.browser.picker = None;
-        if self.browser.path().is_none() {
-            self.browser.open = false;
-        }
     }
 
     pub fn close_browser(&mut self) {
@@ -1728,7 +1724,7 @@ impl State {
         };
         offer(true, Command::new("View", layout, move |s, _| s.set_layout(other)).shortcut(LAYOUT));
 
-        offer(true, Command::new("File", "Open a file", State::open_file_picker).shortcut(FILE_PICKER));
+        offer(true, Command::new("File", "Open a file", |s, _| s.open_file_picker()).shortcut(FILE_PICKER));
         if !self.showing_comments {
             let name = self.diff.files().get(file).and_then(|diff| diff.path().rsplit('/').next()).unwrap_or_default();
             offer(self.worktree_path(file).is_some(), Command::new("File", format!("Open {name}"), |s, tx| s.browse_diff_file(s.diff.visible_file(), tx)));
@@ -1765,7 +1761,7 @@ impl State {
     }
 
     fn dialog_open(&self) -> bool {
-        let pickers = self.switcher.is_some() || self.merger.is_some() || self.shell.opener.is_some() || self.browser.open;
+        let pickers = self.switcher.is_some() || self.merger.is_some() || self.shell.opener.is_some() || self.browser.open || self.browser.picker.is_some();
         let dialogs = self.deleting.is_some() || self.deleting_group.is_some() || self.confirming.is_some() || self.committing || self.stashing.is_some() || self.managing_remotes || self.action_failure.is_some() || self.showing_keys;
         pickers || dialogs
     }

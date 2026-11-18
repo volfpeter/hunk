@@ -1383,11 +1383,7 @@ fn browse_overlay(s: &State, k: &Kit, overlays: &mut Vec<El>) {
     if !browser.open {
         return;
     }
-    overlays.push(el().key("browse-scrim").absolute(0.0, 0.0).w_full().h_full().fill(k.c.scrim).a11y_hidden());
-    // Until a file is picked, the picker stands alone.
-    if browser.path().is_none() {
-        return;
-    }
+    overlays.push(scrim("browse-scrim", k));
     let content = match &browser.error {
         Some(error) => col().w_full().grow(1.0).center().gap(12.0).padding(16.0).child(text(error.clone()).font(k.ty.ui).color(k.c.text_muted).wrap_anywhere()).child(browse_actions(s, k)),
         None if browser.diff.files().is_empty() => col().w_full().grow(1.0),
@@ -1414,12 +1410,17 @@ fn browse_overlay(s: &State, k: &Kit, overlays: &mut Vec<El>) {
     overlays.push(el().key("browse-layer").absolute(0.0, 0.0).w_full().h_full().padding(BROWSE_MARGIN).child(panel));
 }
 
+/// Dims what lies under an overlay.
+fn scrim(key: &str, k: &Kit) -> El {
+    el().key(key).absolute(0.0, 0.0).w_full().h_full().fill(k.c.scrim).a11y_hidden()
+}
+
 /// Back, forward, another file and close, for the file overlay.
 fn browse_actions(s: &State, k: &Kit) -> El {
     let visit = |glyph: &'static Icon, help: &str, forward: bool| {
         action_icon(glyph, help.to_owned(), !s.browser.can_go(forward)).on_press(move |s: &mut State| s.browse_visit(forward)).build(k)
     };
-    let pick = Button::new("Open a file").variant(ButtonVariant::GhostMuted).control_size(ControlSize::Small).shortcut(FILE_PICKER).on_press_tx(State::open_file_picker);
+    let pick = Button::new("Open a file").variant(ButtonVariant::GhostMuted).control_size(ControlSize::Small).shortcut(FILE_PICKER).on_press(State::open_file_picker);
     let close = action_icon(&rune_kit::glyphs::CLOSE, "Close (Escape)".to_owned(), false).on_press(State::close_browser).build(k);
     row()
         .gap(4.0)
@@ -1467,7 +1468,7 @@ fn file_picker(s: &State, k: &Kit, overlays: &mut Vec<El>) {
     let list = dialog_list("picked").role("listbox").children(rows);
     let none = if s.browser.walking() { "Looking for files…" } else { "No files match" };
     let list = if s.browser.offer.is_empty() { list.child(muted(k, none).py(8.0)) } else { list };
-    let escape = if s.browser.path().is_some() { "Escape goes back to the file" } else { "Escape closes" };
+    let escape = if s.browser.open { "Escape goes back to the file" } else { "Escape closes" };
     let hint = text(format!("Enter opens the file, {escape}")).font(k.ty.text_small).color(k.c.text_faint).px(8.0);
     let mut card = col()
         .key("file-picker")
@@ -1487,6 +1488,10 @@ fn file_picker(s: &State, k: &Kit, overlays: &mut Vec<El>) {
         card = card.box_shadow(shadow);
     }
     let card = card.token_motion(k.motion.overlay).modal(true, State::close_file_picker);
+    // Without the overlay, the picker stands alone over the review.
+    if !s.browser.open {
+        overlays.push(scrim("file-picker-scrim", k));
+    }
     overlays.push(el().key("file-picker-layer").absolute(0.0, 0.0).w_full().h_full().padding(BROWSE_MARGIN).pt(BROWSE_MARGIN + FILE_PICKER_TOP).center().items_start().child(card));
 }
 
