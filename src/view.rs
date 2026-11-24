@@ -7,7 +7,7 @@ use rune_kit::{Badge, Button, ButtonVariant, ControlSize, Dialog, FileNode, Icon
 
 use crate::action::{Action, Integration, Stashed};
 use crate::browse::{BROWSED, BROWSED_SCROLL};
-use crate::app::{APPLICATION, COMMENTS, COMMIT, COPY, Command, DRAFT_NOTE, FILE_PICKER, KEYS, Kind, MERGE, PALETTE, PULL, PULL_REQUEST, PUSH, PullRequestOffer, State, Target, copy_label};
+use crate::app::{APPLICATION, BROWSE_FILES, COMMENTS, COMMIT, COPY, Command, DRAFT_NOTE, FILE_PICKER, KEYS, Kind, MERGE, PALETTE, PULL, PULL_REQUEST, PUSH, PullRequestOffer, State, Target, copy_label};
 use crate::comments::{Comment, Group};
 use crate::gh::{PullRequest, Status};
 use crate::open::{Choice, tilde};
@@ -54,6 +54,7 @@ const BROWSE_MARGIN: f32 = 24.0;
 /// How far into the file overlay its picker sits.
 const FILE_PICKER_TOP: f32 = 8.0;
 const FILE_PICKER_WIDTH: f32 = 640.0;
+const FILE_TREE_WIDTH: f32 = 280.0;
 
 /// Two points compared, neither leading to the other.
 static COMPARED: Icon = Icon {
@@ -158,6 +159,13 @@ static FORWARD_ICON: Icon = Icon {
     name: "hunk-forward",
     view: 16.0,
     body: r#"<path d="M3 8H13M9 4L13 8L9 12" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" fill="none"/>"#,
+};
+
+/// The file tree: a panel on the left of a frame.
+static FILE_TREE_ICON: Icon = Icon {
+    name: "hunk-file-tree",
+    view: 16.0,
+    body: r#"<rect x="2" y="2.75" width="12" height="10.5" rx="1.5" stroke="currentColor" stroke-width="1.5" fill="none"/><path d="M6.25 2.75V13.25" stroke="currentColor" stroke-width="1.5"/>"#,
 };
 
 /// Where a comment card sits, which decides what it repeats of its surroundings.
@@ -1385,13 +1393,15 @@ fn browse_overlay(s: &State, k: &Kit, overlays: &mut Vec<El>) {
     }
     overlays.push(scrim("browse-scrim", k));
     let content = match &browser.error {
-        Some(error) => col().w_full().grow(1.0).center().gap(12.0).padding(16.0).child(text(error.clone()).font(k.ty.ui).color(k.c.text_muted).wrap_anywhere()).child(browse_actions(s, k)),
+        Some(error) => browse_message(k, error.clone()),
+        None if browser.path().is_none() => {
+            let how = if browser.tree_open { "Pick a file to open it" } else { "Open a file to see it whole" };
+            browse_message(k, how.to_owned())
+        }
         None if browser.diff.files().is_empty() => col().w_full().grow(1.0),
         None => {
             remember_scroll(s);
-            let actions_kit = k.clone();
-            let diff = DiffView::new(|s: &State| &s.browser.diff, |s: &mut State| &mut s.browser.diff).key(BROWSED).fold_row(FoldRow::LineInfo);
-            diff.header_actions(move |s: &State, _| browse_actions(s, &actions_kit)).build(s, k)
+            DiffView::new(|s: &State| &s.browser.diff, |s: &mut State| &mut s.browser.diff).key(BROWSED).fold_row(FoldRow::LineInfo).build(s, k)
         }
     };
     let panel = col()
@@ -1405,7 +1415,8 @@ fn browse_overlay(s: &State, k: &Kit, overlays: &mut Vec<El>) {
         .clip_rounded(8.0)
         .fill(k.c.bg_base)
         .border(1.0, k.c.border_base)
-        .child(content)
+        .child(browse_bar(s, k))
+        .child(row().w_full().grow(1.0).min_h(0.0).children(file_sidebar(s, k)).child(col().grow(1.0).min_w(0.0).h_full().min_h(0.0).child(content)))
         .modal(true, State::close_browser);
     overlays.push(el().key("browse-layer").absolute(0.0, 0.0).w_full().h_full().padding(BROWSE_MARGIN).child(panel));
 }
@@ -1415,20 +1426,51 @@ fn scrim(key: &str, k: &Kit) -> El {
     el().key(key).absolute(0.0, 0.0).w_full().h_full().fill(k.c.scrim).a11y_hidden()
 }
 
-/// Back, forward, another file and close, for the file overlay.
-fn browse_actions(s: &State, k: &Kit) -> El {
+/// `message` in place of the overlay's file.
+fn browse_message(k: &Kit, message: String) -> El {
+    col().w_full().grow(1.0).center().padding(16.0).child(text(message).font(k.ty.ui).color(k.c.text_muted).wrap_anywhere())
+}
+
+/// The worktree's files beside the overlay's file, marked when changed, while the tree shows.
+fn file_sidebar(s: &State, k: &Kit) -> Option<El> {
+    let browser = &s.browser;
+    if !browser.tree_open {
+        return None;
+    }
+    let content = if browser.tree.is_empty() {
+        muted(k, if browser.walking() { "Looking for files…" } else { "No files" }).py(8.0)
+    } else {
+        let changed = k.c.text_accent;
+        let tree = Tree::new(|s: &State| &s.browser.tree, |s: &mut State| &mut s.browser.tree, FileNode::label).row(move |node, row| {
+            let item = TreeItem::file(node, row);
+            if node.data == Some(true) { item.dot(changed) } else { item }
+        });
+        let tree = tree.name("Files").on_select(|s: &mut State, path: &str, tx: &mut Tx| s.browse_tree_file(path, tx));
+        tree.build(s, k).grow(1.0).min_h(0.0)
+    };
+    let sidebar = col().key("browse-files").w(FILE_TREE_WIDTH).h_full().min_h(0.0).padding(8.0).border_sides([0.0, 1.0, 0.0, 0.0], k.c.border_base);
+    Some(sidebar.child(content))
+}
+
+/// The file overlay's toolbar: the file tree's toggle, back and forward, then another file and close.
+fn browse_bar(s: &State, k: &Kit) -> El {
     let visit = |glyph: &'static Icon, help: &str, forward: bool| {
         action_icon(glyph, help.to_owned(), !s.browser.can_go(forward)).on_press(move |s: &mut State| s.browse_visit(forward)).build(k)
     };
     let pick = Button::new("Open a file").variant(ButtonVariant::GhostMuted).control_size(ControlSize::Small).shortcut(FILE_PICKER).on_press(State::open_file_picker);
     let close = action_icon(&rune_kit::glyphs::CLOSE, "Close (Escape)".to_owned(), false).on_press(State::close_browser).build(k);
-    row()
+    let shown = s.browser.tree_open;
+    let files = action_icon(&FILE_TREE_ICON, format!("{} files ({BROWSE_FILES})", if shown { "Hide" } else { "Show" }), false).expanded(shown);
+    let files = files.on_press_tx(move |s: &mut State, tx: &mut Tx| s.set_file_tree(!shown, tx)).build(k);
+    let bar = status_line()
         .gap(4.0)
-        .items_center()
+        .child(files)
         .child(visit(&BACK_ICON, "Back (Alt+←)", false))
         .child(visit(&FORWARD_ICON, "Forward (Alt+→)", true))
+        .child(row().grow(1.0))
         .child(pick.build(k))
-        .child(close)
+        .child(close);
+    sheet_header(k, "browse-bar", bar)
 }
 
 /// Keeps where the file overlay's diff is scrolled to, which its viewport forgets on closing.
@@ -1439,7 +1481,7 @@ fn remember_scroll(s: &State) {
 }
 
 /// Every file of the working tree on offer, the recent and changed ones first, in a card at
-/// the top of the file overlay, over the file's header.
+/// the top of the file overlay, over its toolbar.
 fn file_picker(s: &State, k: &Kit, overlays: &mut Vec<El>) {
     let Some(active) = s.browser.picker else { return };
     let field = TextInput::new(&s.browser.picker_text)

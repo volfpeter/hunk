@@ -50,7 +50,9 @@ The full-screen button at the end of a file's header in the diff, or **File: Ope
 
 It shows what is on disk now, whatever the review compares, and updates when the file changes. **Escape** closes it, and the review is as you left it. Opening it again brings back the same file, where you were.
 
-**Alt+←** and **Alt+→**, or the arrows in the file's header, go back and forward through the files you opened, each where you left it.
+To look around instead, **Ctrl+E**, or **File: Browse files**, opens the overlay on a tree of the files, the changed ones marked with a dot. Click a file to open it, or move to it with the arrow keys. The file you open shows selected in the tree. **Ctrl+E** in the overlay, or the panel icon in its header, shows or hides the tree, and it stays that way next time.
+
+**Alt+←** and **Alt+→**, or the arrows at the top of the overlay, go back and forward through the files you opened, each where you left it.
 
 Files Git ignores aren't offered. To bring some back, like `.env` or generated code, un-ignore them in a `.ignore` file, as ripgrep reads it: a line `!.env`.
 
@@ -167,6 +169,6 @@ They use your own Git setup, but can't answer prompts: if Git needs a password i
 
 The list also moves through the diff, switches to another view and opens another repository. A command with a key shows it, to use without the list: **]** and **[** go to the next and previous file, **j** and **k** to the next and previous change.
 
-Keys follow a pattern: **Ctrl** with a letter opens something to pick from, like **Ctrl+K**, **Ctrl+O**, **Ctrl+B** and **Ctrl+P**, and **Ctrl+Shift** with a letter or arrow runs a Git operation, or copies the open comments with **Ctrl+Shift+C**. **Ctrl+1** to **Ctrl+5** switch to the views in the bar's order, and **Ctrl+0** opens the comments page. In a dialog asking to confirm, **Ctrl+Enter** goes ahead.
+Keys follow a pattern: **Ctrl** with a letter opens something to pick from, like **Ctrl+K**, **Ctrl+O**, **Ctrl+B**, **Ctrl+P** and **Ctrl+E**, and **Ctrl+Shift** with a letter or arrow runs a Git operation, or copies the open comments with **Ctrl+Shift+C**. **Ctrl+1** to **Ctrl+5** switch to the views in the bar's order, and **Ctrl+0** opens the comments page. In a dialog asking to confirm, **Ctrl+Enter** goes ahead.
 
 **Ctrl+H**, or the question mark at the far right of the bar, lists every keyboard shortcut, grouped as the palette groups its commands, with a second key where a command has one. It lists them all, including those that do nothing right now, like Push with nothing to send. **Ctrl+H** again, or **Escape**, closes it.

@@ -65,6 +65,10 @@ Everything the app does, to try at your own pace. A tick means Peter tried it an
 - [ ] Alt+← / Alt+→, or the arrows in the header, go back and forward through the files opened, each where you left it
 - [ ] Picking a file after going back drops the ones ahead, as a browser does
 - [ ] The picker is a card at the top of the overlay, without a title or a second dimming; opened with the overlay closed, it stands alone over the review
+- [ ] Ctrl+E, or File: Browse files, opens the overlay on a file tree, without the picker
+- [ ] The tree lists every file on offer, folders first, changed files marked with a dot; a click, or moving to it with the arrow keys, opens one
+- [ ] The file opened is revealed in the tree, its folders opened
+- [ ] Ctrl+E in the overlay, or the panel icon in its header, shows or hides the tree; the choice holds across restarts
 
 ## Comments
 

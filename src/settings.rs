@@ -25,6 +25,12 @@ struct StoreFile {
     layout: DiffMode,
     #[serde(default)]
     kind: Kind,
+    #[serde(default = "shown")]
+    file_tree: bool,
+}
+
+fn shown() -> bool {
+    true
 }
 
 /// The settings, written in the background as they change. The default is split on staging,
@@ -37,11 +43,13 @@ pub struct Settings {
     layout: DiffMode,
     /// The kind of review on screen.
     kind: Kind,
+    /// Whether the file overlay shows the worktree's files beside the file.
+    file_tree: bool,
 }
 
 impl Default for Settings {
     fn default() -> Settings {
-        Settings { file: None, layout: DiffMode::Split, kind: Kind::default() }
+        Settings { file: None, layout: DiffMode::Split, kind: Kind::default(), file_tree: true }
     }
 }
 
@@ -51,7 +59,7 @@ impl Settings {
         let file = kept::path(FILE_NAME);
         let stored = file.as_deref().and_then(kept::read::<StoreFile>).filter(|stored| stored.version == VERSION);
         let Some(stored) = stored else { return Settings { file, ..Settings::default() } };
-        Settings { file, layout: stored.layout, kind: stored.kind }
+        Settings { file, layout: stored.layout, kind: stored.kind, file_tree: stored.file_tree }
     }
 
     pub fn layout(&self) -> DiffMode {
@@ -74,9 +82,20 @@ impl Settings {
         }
     }
 
+    pub fn file_tree(&self) -> bool {
+        self.file_tree
+    }
+
+    pub fn set_file_tree(&mut self, shown: bool) {
+        if shown != self.file_tree {
+            self.file_tree = shown;
+            self.save();
+        }
+    }
+
     fn save(&self) {
         if let Some(file) = self.file.clone() {
-            kept::save(file, StoreFile { version: VERSION, layout: self.layout, kind: self.kind });
+            kept::save(file, StoreFile { version: VERSION, layout: self.layout, kind: self.kind, file_tree: self.file_tree });
         }
     }
 }

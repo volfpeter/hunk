@@ -9,6 +9,7 @@ use std::rc::Rc;
 use ignore::WalkBuilder;
 use rune::{Latest, TextEdit, Tx, Waker};
 use rune_kit::diff::{DiffMode, DiffState, LineRange, parse};
+use rune_kit::{FileNode, FileTree, TreeModel};
 use serde::{Deserialize, Serialize};
 
 use crate::comments::Anchor;
@@ -28,6 +29,8 @@ const VISITS: usize = 50;
 
 /// The key of the overlay's diff.
 pub const BROWSED: &str = "browsed";
+/// The key of the overlay's file tree.
+pub const FILE_TREE: &str = "browse-tree";
 /// The overlay's scroll viewport, which [`rune_kit::diff::DiffView`] keys below its own.
 pub const BROWSED_SCROLL: &str = "browsed/scroll";
 
@@ -42,6 +45,10 @@ struct Visit {
 pub struct Browser {
     /// Whether the overlay is on screen.
     pub open: bool,
+    /// Whether the overlay shows the file tree.
+    pub tree_open: bool,
+    /// The files on offer as folders, each marked when it has changes.
+    pub tree: TreeModel<FileNode<bool>>,
     /// The files shown, oldest first.
     visits: Vec<Visit>,
     /// The visit on screen.
@@ -70,11 +77,13 @@ pub struct Browser {
 }
 
 impl Browser {
-    pub fn new(recent: RecentFiles) -> Browser {
+    pub fn new(recent: RecentFiles, tree_open: bool) -> Browser {
         let mut diff = DiffState::default();
         diff.set_mode(DiffMode::Unified);
         Browser {
             open: false,
+            tree_open,
+            tree: TreeModel::new().key(FILE_TREE),
             visits: Vec::new(),
             at: 0,
             restore: None,
@@ -98,7 +107,7 @@ impl Browser {
         self.file_load.set_waker(waker);
     }
 
-    /// Walks the worktree at `root` again for the picker.
+    /// Walks the worktree at `root` again for the picker and the file tree.
     pub fn walk(&mut self, root: PathBuf) {
         self.files_load.request(root, |root| files(&root));
     }
@@ -181,6 +190,33 @@ impl Browser {
         (landed, walked)
     }
 
+    /// Fills the file tree from the files on offer, marking those `changed` says have changes,
+    /// keeping its open folders and selection. A tree filled for the first time shows the file
+    /// on screen.
+    pub fn fill_tree(&mut self, changed: impl Fn(&str) -> bool, tx: &mut Tx) {
+        let Some(files) = &self.files else { return };
+        let mut tree = FileTree::new().key(FILE_TREE).build(files.iter().map(|path| (path, changed(path))));
+        let old = &self.tree;
+        for folder in (0..old.visible_len()).filter_map(|row| old.visible_id(row)).filter(|id| old.is_expanded(id)) {
+            tree.set_expanded(folder, true);
+        }
+        if let Some(id) = old.selected().next() {
+            tree.select(id);
+        }
+        let first = old.is_empty();
+        self.tree = tree;
+        if first {
+            self.show_in_tree(tx);
+        }
+    }
+
+    /// Opens the file tree's folders down to the file on screen, and selects and scrolls to it.
+    pub fn show_in_tree(&mut self, tx: &mut Tx) {
+        if let Some(visit) = self.visits.get(self.at) {
+            self.tree.reveal(&visit.path, tx);
+        }
+    }
+
     /// Puts the file `path` on screen. A newer state of the file on screen keeps the reader's
     /// place and selection; another file starts at its top, or where a visit back to it left it.
     fn land(&mut self, path: &str, patch: Result<String>, tx: &mut Tx) {
@@ -201,6 +237,9 @@ impl Browser {
             self.patch = patch;
             if let Some(lines) = selection.filter(|lines| self.diff.files().first().is_some_and(|file| Anchor::on_lines(file, *lines).is_some())) {
                 self.diff.set_selection(Some(lines));
+            }
+            if !same_file {
+                self.show_in_tree(tx);
             }
             match self.restore.take().filter(|_| !same_file) {
                 Some([x, y]) => tx.scroll_to_instant(BROWSED_SCROLL, x, y),
@@ -386,7 +425,7 @@ mod tests {
     #[test]
     fn going_back_and_forward_walks_the_visits_and_a_new_one_drops_those_ahead() {
         let fixture = Fixture::new();
-        let mut browser = Browser::new(RecentFiles::default());
+        let mut browser = Browser::new(RecentFiles::default(), true);
         for path in ["a", "b", "c"] {
             browser.show(&fixture.repo, path.to_owned(), None);
         }
@@ -400,6 +439,24 @@ mod tests {
         assert!(!browser.can_go(true));
         browser.go(&fixture.repo, false);
         assert_eq!(browser.path(), Some("b"));
+    }
+
+    #[test]
+    fn the_file_tree_opens_on_the_file_shown_and_keeps_what_was_opened_since() {
+        let fixture = Fixture::new();
+        let mut browser = Browser::new(RecentFiles::default(), true);
+        browser.show(&fixture.repo, "src/app.rs".to_owned(), None);
+        browser.files = Some(["docs/a.md", "src/app.rs", "src/view.rs"].map(str::to_owned).to_vec());
+        let tx = &mut Tx::default();
+
+        browser.fill_tree(|path| path == "src/view.rs", tx);
+        assert!(browser.tree.is_selected("src/app.rs") && browser.tree.is_expanded("src") && !browser.tree.is_expanded("docs"));
+        assert_eq!(browser.tree.get("src/view.rs").and_then(|node| node.data), Some(true));
+
+        browser.tree.set_expanded("docs", true);
+        browser.tree.select("src/view.rs");
+        browser.fill_tree(|_| false, tx);
+        assert!(browser.tree.is_expanded("docs") && browser.tree.is_selected("src/view.rs"));
     }
 
     #[test]

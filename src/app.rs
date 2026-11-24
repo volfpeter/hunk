@@ -182,6 +182,7 @@ pub const COPY: &str = "Ctrl+Shift+C";
 pub const MERGE: &str = "Ctrl+Shift+M";
 pub const PULL_REQUEST: &str = "Ctrl+Shift+R";
 pub const FILE_PICKER: &str = "Ctrl+P";
+pub const BROWSE_FILES: &str = "Ctrl+E";
 /// The key of each view of the repository, in the order of `Kind::ALL`.
 const VIEWS: [&str; 5] = ["Ctrl+1", "Ctrl+2", "Ctrl+3", "Ctrl+4", "Ctrl+5"];
 pub const COMMENTS: &str = "Ctrl+0";
@@ -330,9 +331,9 @@ pub struct State {
 impl State {
     /// A window on what `opened` found, if anything.
     pub fn new(opened: Option<Opened>, shell: Shell) -> State {
-        let (layout, kind) = {
+        let (layout, kind, file_tree) = {
             let settings = &shell.shared.borrow().settings;
-            (settings.layout(), settings.kind())
+            (settings.layout(), settings.kind(), settings.file_tree())
         };
         let (mut diff, mut comment_sheet) = (DiffState::default(), DiffState::default());
         diff.set_mode(layout);
@@ -395,7 +396,7 @@ impl State {
             creating_pull_request: false,
             head_parent_load: Latest::default(),
             watch: None,
-            browser: Browser::new(recent_files),
+            browser: Browser::new(recent_files, file_tree),
             shell,
         };
         state.rebuild_sheet();
@@ -432,6 +433,7 @@ impl State {
         }
         let offer = self.shell.offer_load.take();
         let overview = self.overview_load.take();
+        let overview_landed = overview.is_some();
         let patch = self.patch_load.take();
         let comments = self.comments.poll();
         let action = self.action_load.take();
@@ -467,6 +469,9 @@ impl State {
         let outcome_ended = self.outcome.step(clock, tx);
         if let Some(overview) = overview {
             self.show_overview(overview);
+        }
+        if walked || overview_landed {
+            self.fill_file_tree(tx);
         }
         if comments {
             self.comments_changed();
@@ -508,6 +513,12 @@ impl State {
         if event.is_command('p') {
             if self.browser.picker.is_none() && (self.browser.open || !self.dialog_open()) {
                 self.open_file_picker();
+            }
+            return true;
+        }
+        if event.is_command('e') {
+            if self.browser.picker.is_none() && (self.browser.open || !self.dialog_open()) {
+                self.browse_files(tx);
             }
             return true;
         }
@@ -656,6 +667,9 @@ impl State {
         self.overview_load.request(repo.clone(), |repo| Overview::load(&repo));
         self.comments.follow_code(repo);
         self.browser.reload(repo);
+        if self.browser.open && self.browser.tree_open {
+            self.browser.walk(repo.root().to_owned());
+        }
     }
 
     pub fn select_kind(&mut self, kind: Kind) {
@@ -1515,7 +1529,8 @@ impl State {
         }
     }
 
-    fn browse(&mut self, path: String, reveal: Option<LineRange>, tx: &mut Tx) {
+    /// Shows the worktree's file `path` in the overlay, at `reveal` once it lands.
+    pub fn browse(&mut self, path: String, reveal: Option<LineRange>, tx: &mut Tx) {
         let Some(repo) = &self.repo else { return };
         self.browser.show(repo, path, reveal);
         self.show_browser(tx);
@@ -1533,6 +1548,50 @@ impl State {
         if let Some(repo) = &self.repo {
             self.browser.reload(repo);
         }
+        self.show_file_tree(tx);
+    }
+
+    /// Shows the file tree's node `path` in the overlay, unless it is a folder.
+    pub fn browse_tree_file(&mut self, path: &str, tx: &mut Tx) {
+        if self.browser.tree.get(path).is_some_and(|node| !node.dir) {
+            self.browse(path.to_owned(), None, tx);
+        }
+    }
+
+    /// Opens the file overlay showing its file tree, or shows or hides the tree while it is open.
+    pub fn browse_files(&mut self, tx: &mut Tx) {
+        if self.repo.is_none() {
+            return;
+        }
+        if self.browser.open {
+            self.set_file_tree(!self.browser.tree_open, tx);
+        } else {
+            self.set_file_tree(true, tx);
+            self.show_browser(tx);
+        }
+    }
+
+    /// Shows or hides the file overlay's file tree, keeping the choice in the settings.
+    pub fn set_file_tree(&mut self, shown: bool, tx: &mut Tx) {
+        self.browser.tree_open = shown;
+        self.shell.shared.borrow_mut().settings.set_file_tree(shown);
+        if self.browser.open {
+            self.show_file_tree(tx);
+        }
+    }
+
+    /// Reads the files of the overlay's tree again and brings the file on screen into view in
+    /// it, when it shows.
+    fn show_file_tree(&mut self, tx: &mut Tx) {
+        let Some(repo) = self.repo.as_ref().filter(|_| self.browser.tree_open) else { return };
+        self.browser.walk(repo.root().to_owned());
+        self.browser.show_in_tree(tx);
+    }
+
+    /// Fills the overlay's file tree from the files on offer, marking the changed ones.
+    fn fill_file_tree(&mut self, tx: &mut Tx) {
+        let changed = &self.overview.files;
+        self.browser.fill_tree(|path| changed.contains_key(path), tx);
     }
 
     pub fn open_palette(&mut self) {
@@ -1725,6 +1784,7 @@ impl State {
         offer(true, Command::new("View", layout, move |s, _| s.set_layout(other)).shortcut(LAYOUT));
 
         offer(true, Command::new("File", "Open a file", |s, _| s.open_file_picker()).shortcut(FILE_PICKER));
+        offer(true, Command::new("File", "Browse files", State::browse_files).shortcut(BROWSE_FILES));
         if !self.showing_comments {
             let name = self.diff.files().get(file).and_then(|diff| diff.path().rsplit('/').next()).unwrap_or_default();
             offer(self.worktree_path(file).is_some(), Command::new("File", format!("Open {name}"), |s, tx| s.browse_diff_file(s.diff.visible_file(), tx)));

@@ -9,8 +9,8 @@ dirs = "7.0.0"
 ignore = "0.4.34"
 notify = "8.2.1"
 nucleo-matcher = "0.3.1"
-rune = { git = "https://github.com/anomalyco/rune", rev = "78efd4a7876b5478dd72033ce6fd2b2f13ab9f9a" }
-rune-kit = { git = "https://github.com/anomalyco/rune", rev = "78efd4a7876b5478dd72033ce6fd2b2f13ab9f9a" }
+rune = { git = "https://github.com/anomalyco/rune", rev = "3fe36ad89fcf8f5abe7ec315c9cd98862b2ab827" }
+rune-kit = { git = "https://github.com/anomalyco/rune", rev = "3fe36ad89fcf8f5abe7ec315c9cd98862b2ab827" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 
@@ -19,8 +19,11 @@ tempfile = "3"
 
 # Rune builds against its own patched copies of these; a dependency's `[patch]` doesn't reach us.
 [patch.crates-io]
-wgpu-hal = { git = "https://github.com/anomalyco/rune", rev = "78efd4a7876b5478dd72033ce6fd2b2f13ab9f9a" }
-winit = { git = "https://github.com/anomalyco/rune", rev = "78efd4a7876b5478dd72033ce6fd2b2f13ab9f9a" }
-parley_engine = { git = "https://github.com/anomalyco/rune", rev = "78efd4a7876b5478dd72033ce6fd2b2f13ab9f9a" }
-accesskit_windows = { git = "https://github.com/anomalyco/rune", rev = "78efd4a7876b5478dd72033ce6fd2b2f13ab9f9a" }
-accesskit_macos = { git = "https://github.com/anomalyco/rune", rev = "78efd4a7876b5478dd72033ce6fd2b2f13ab9f9a" }
+wgpu-hal = { git = "https://github.com/anomalyco/rune", rev = "3fe36ad89fcf8f5abe7ec315c9cd98862b2ab827" }
+naga = { git = "https://github.com/anomalyco/rune", rev = "3fe36ad89fcf8f5abe7ec315c9cd98862b2ab827" }
+winit = { git = "https://github.com/anomalyco/rune", rev = "3fe36ad89fcf8f5abe7ec315c9cd98862b2ab827" }
+sctk-adwaita = { git = "https://github.com/anomalyco/rune", rev = "3fe36ad89fcf8f5abe7ec315c9cd98862b2ab827" }
+parley_engine = { git = "https://github.com/anomalyco/rune", rev = "3fe36ad89fcf8f5abe7ec315c9cd98862b2ab827" }
+accesskit_windows = { git = "https://github.com/anomalyco/rune", rev = "3fe36ad89fcf8f5abe7ec315c9cd98862b2ab827" }
+accesskit_atspi_common = { git = "https://github.com/anomalyco/rune", rev = "3fe36ad89fcf8f5abe7ec315c9cd98862b2ab827" }
+accesskit_macos = { git = "https://github.com/anomalyco/rune", rev = "3fe36ad89fcf8f5abe7ec315c9cd98862b2ab827" }
