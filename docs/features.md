@@ -46,6 +46,13 @@ Everything the app does, to try at your own pace. A tick means Peter tried it an
 - [ ] File list and diff use the same order, by path
 - [ ] Collapse a file
 - [ ] Show the unchanged lines around changes: 20 more from an arrow or the count, all of them with Shift
+- [ ] Ctrl+F, the magnifier in the top bar, or Navigation: Find opens a find field floating in the middle of the top bar; the magnifier closes it again
+- [ ] It finds as you type, ignoring case and accents you leave out, and selects the line it found
+- [ ] It counts the lines found (`2 of 5`); Enter and Shift+Enter, or its arrows, go to the next and previous one, wrapping round
+- [ ] It finds from the selected line, or from the top of the file on screen with nothing selected
+- [ ] It finds in the changes shown, not in folded lines, opened or not
+- [ ] Escape, or ×, closes it; the line found stays selected, so the full-screen icon opens the file there in Changes and Staging
+- [ ] It works on the comments page too
 
 ## Files
 
@@ -69,6 +76,7 @@ Everything the app does, to try at your own pace. A tick means Peter tried it an
 - [ ] The tree lists every file on offer, folders first, changed files marked with a dot; a click, or moving to it with the arrow keys, opens one
 - [ ] The file opened is revealed in the tree, its folders opened
 - [ ] Ctrl+E in the overlay, or the panel icon in its header, shows or hides the tree; the choice holds across restarts
+- [ ] Ctrl+F in the overlay, or the magnifier in its header, finds in the whole file; the field floats over its toolbar, and Escape closes it, not the overlay
 
 ## Comments
 

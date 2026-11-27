@@ -7,8 +7,9 @@ use rune_kit::{Badge, Button, ButtonVariant, ControlSize, Dialog, FileNode, Icon
 
 use crate::action::{Action, Integration, Stashed};
 use crate::browse::{BROWSED, BROWSED_SCROLL};
-use crate::app::{APPLICATION, BROWSE_FILES, COMMENTS, COMMIT, COPY, Command, DRAFT_NOTE, FILE_PICKER, KEYS, Kind, MERGE, PALETTE, PULL, PULL_REQUEST, PUSH, PullRequestOffer, State, Target, copy_label};
+use crate::app::{APPLICATION, BROWSE_FILES, COMMENTS, COMMIT, COPY, Command, DRAFT_NOTE, FILE_PICKER, FIND, KEYS, Kind, MERGE, PALETTE, PULL, PULL_REQUEST, PUSH, PullRequestOffer, State, Target, copy_label};
 use crate::comments::{Comment, Group};
+use crate::find::{self, Step};
 use crate::gh::{PullRequest, Status};
 use crate::menu::{Row, RowAction};
 use crate::open::{Choice, tilde};
@@ -56,6 +57,11 @@ const BROWSE_MARGIN: f32 = 24.0;
 const FILE_PICKER_TOP: f32 = 8.0;
 const FILE_PICKER_WIDTH: f32 = 640.0;
 const FILE_TREE_WIDTH: f32 = 280.0;
+const FIND_WIDTH: f32 = 280.0;
+/// Wide enough for "No matches", so the card keeps its width as the count changes.
+const FIND_COUNT_WIDTH: f32 = 80.0;
+/// The file overlay's toolbar, above the line under it.
+const BROWSE_BAR_HEIGHT: f32 = 36.0;
 /// Grows far more than a tree row's empty label, so the row's own content sits at its start.
 const PUSH_RIGHT: f32 = 10_000.0;
 const ROW_MENU_WIDTH: f32 = 260.0;
@@ -213,6 +219,8 @@ pub fn view(s: &State, cx: &mut Cx<State>) -> El {
     let mut overlays = Vec::new();
     // Under everything, as it fills the window.
     browse_overlay(s, &k, &mut overlays);
+    // In the overlay, the card is part of it, as its panel is modal.
+    overlays.extend(find_card(s, &k).filter(|_| !s.browser.open));
     file_picker(s, &k, &mut overlays);
     // Under the confirm for removing a remote.
     remotes_dialog(s, &k, &mut overlays);
@@ -293,6 +301,7 @@ fn bar(s: &State, k: &Kit) -> El {
     let pull = pull.build(k, |s, _| s.run(Action::Pull));
     let push = BarButton::new(&PUSH_ICON, moving("Push", ahead, "send")).count(counted(ahead)).shortcut(PUSH).disabled(!s.can_push());
     let push = push.build(k, |s, _| s.run(Action::Push));
+    let find = BarButton::new(&rune_kit::glyphs::SEARCH, "Find".to_owned()).shortcut(FIND).expanded(s.finding).build(k, |s, _| s.toggle_find());
     let keys = BarButton::new(&KEYS_ICON, "Keyboard shortcuts".to_owned()).shortcut(KEYS).muted(true).expanded(s.showing_keys).build(k, |s, _| s.open_keys());
 
     let repository = head_button(s.repo_name(), "Open another repository", "Ctrl+O").disabled(!s.can_open()).on_press(State::open_opener);
@@ -311,6 +320,7 @@ fn bar(s: &State, k: &Kit) -> El {
         .child(row().grow(1.0))
         .children(s.running.map(|action| progress(k, action)))
         .children(s.overview.operation.as_ref().map(|operation| operation_button(s, k, operation)))
+        .child(find.key("find"))
         .child(comments.key("comments"))
         .children(s.head_pull_request().map(|found| head_pull_request(k, found)))
         .child(commit.key("commit"))
@@ -1458,6 +1468,7 @@ fn browse_overlay(s: &State, k: &Kit, overlays: &mut Vec<El>) {
         .border(1.0, k.c.border_base)
         .child(browse_bar(s, k))
         .child(row().w_full().grow(1.0).min_h(0.0).children(file_sidebar(s, k)).child(col().grow(1.0).min_w(0.0).h_full().min_h(0.0).child(content)))
+        .children(find_card(s, k))
         .modal(true, State::close_browser);
     overlays.push(el().key("browse-layer").absolute(0.0, 0.0).w_full().h_full().padding(BROWSE_MARGIN).child(panel));
 }
@@ -1509,9 +1520,75 @@ fn browse_bar(s: &State, k: &Kit) -> El {
         .child(visit(&BACK_ICON, "Back (Alt+←)", false))
         .child(visit(&FORWARD_ICON, "Forward (Alt+→)", true))
         .child(row().grow(1.0))
+        .child(find_button(s, k))
         .child(pick.build(k))
         .child(close);
     sheet_header(k, "browse-bar", bar)
+}
+
+/// Shows or hides the find card.
+fn find_button(s: &State, k: &Kit) -> El {
+    action_icon(&rune_kit::glyphs::SEARCH, format!("Find ({FIND})"), false).expanded(s.finding).on_press(State::toggle_find).build(k)
+}
+
+/// The find card, floating in the middle of the window's bar, or of the file overlay's toolbar
+/// while the overlay is open.
+fn find_card(s: &State, k: &Kit) -> Option<El> {
+    if !s.finding {
+        return None;
+    }
+    let diff = s.active_diff();
+    let found = find::find(diff.files(), &s.find_text.text);
+    let count = match (find::current(&found, diff.files(), diff.selection()), found.len()) {
+        _ if s.find_text.text.is_empty() => String::new(),
+        (_, 0) => "No matches".to_owned(),
+        (Some(at), n) => format!("{} of {n}", at + 1),
+        (None, 1) => "1 line".to_owned(),
+        (None, n) => format!("{n} lines"),
+    };
+    let overlay = s.browser.open;
+    let field = TextInput::new(&s.find_text)
+        .width(Some(FIND_WIDTH))
+        .leading_icon(&rune_kit::glyphs::SEARCH)
+        .placeholder(if overlay { "Find in the file" } else { "Find in the diff" })
+        .label("Find")
+        .on_edit(|s: &mut State| &mut s.find_text)
+        .on_change(|s: &mut State, tx: &mut Tx| s.find(Step::Here, tx))
+        .on_submit(|s: &mut State, tx: &mut Tx| s.find(Step::Next, tx))
+        .on_key(|s: &mut State, event: &KeyEvent, tx: &mut Tx| match event.key {
+            Key::Enter if event.mods.shift => {
+                s.find(Step::Previous, tx);
+                true
+            }
+            Key::Escape => {
+                s.close_find();
+                true
+            }
+            _ => edit_by_word(&mut s.find_text, event),
+        });
+    let none = found.is_empty();
+    let step = |glyph: &'static Icon, help: &str, step: Step| action_icon(glyph, help.to_owned(), none).on_press_tx(move |s: &mut State, tx: &mut Tx| s.find(step, tx)).build(k);
+    let close = action_icon(&rune_kit::glyphs::CLOSE, "Close (Escape)".to_owned(), false).on_press(State::close_find).build(k);
+    let mut card = row()
+        .key("find")
+        .role("search")
+        .label("Find")
+        .padding(4.0)
+        .gap(4.0)
+        .items_center()
+        .radius(8.0)
+        .fill(k.c.layer_01)
+        .border(1.0, k.c.border_base)
+        .child(field.build(k))
+        .child(one_line(count).w(FIND_COUNT_WIDTH).font(k.ty.ui).color(k.c.text_muted).px(4.0))
+        .child(step(&rune_kit::glyphs::CHEVRON_UP, "Previous (Shift+Enter)", Step::Previous))
+        .child(step(&rune_kit::glyphs::CHEVRON_DOWN, "Next (Enter)", Step::Next))
+        .child(close);
+    for shadow in k.shadow_layers(&k.elevation.overlay) {
+        card = card.box_shadow(shadow);
+    }
+    let height = if overlay { BROWSE_BAR_HEIGHT } else { BAR_HEIGHT };
+    Some(row().key("find-layer").absolute(0.0, 0.0).w_full().h(height).justify_center().items_center().child(card))
 }
 
 /// Keeps where the file overlay's diff is scrolled to, which its viewport forgets on closing.

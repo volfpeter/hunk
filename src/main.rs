@@ -4,6 +4,7 @@ mod action;
 mod app;
 mod browse;
 mod comments;
+mod find;
 mod forge;
 mod fuzzy;
 mod gh;

@@ -421,6 +421,24 @@ Tasks:
 - [x] Short ages right after the name in the lists and branch dialogs
 - [x] Drop the list headers' action buttons
 
+### Step 8: Find in the diff
+
+Finding text in what is on screen: the review's diff, the comments page, or the file in the overlay. They are all `DiffView`s, so one find field serves them.
+
+Decided with Peter:
+
+- **The review finds in its hunks, not in folded lines**, so opened folds aren't searched either: opening a fold doesn't grow the hunks, and how far a fold is open is private to Rune. The overlay's file is one hunk, so there it finds in the whole file. To find in a whole file from the review, open it.
+- **A match is shown by selecting its line**, as `DiffView` can't mark text within a line. Words within lines need a Rune issue, for a highlight layer like `Markdown::highlights`. The selection is a real one, so opening the file from the diff lands on the match in Changes and Staging, and "+" comments on it.
+- **The selection is the cursor**: Enter finds the next match after the selected line, or from the top of the file on screen when no line is selected. Nothing else is kept, so a reload under the reader can't leave a stale match. Typing finds from the selection on, so the line found stays while it still matches.
+- **A card floating in the middle of the top bar**, over whatever is there, Peter's call: search fields usually float, and it costs the diff no height. In the overlay it floats over the overlay's toolbar. Opened by Ctrl+F or a magnifier in the bar (in the overlay, in its toolbar), never always there. A bar of its own under the diff's top row was the first try. It finds as you type, counts the lines (`2 of 5`), and Enter / Shift+Enter or its arrows go through them, wrapping round. Escape closes it and keeps the line found selected.
+
+Built: the card is a layer of the window over the review, but part of the overlay's panel while it is open, as the panel is modal (`docs/rune-quirks.md`). Matching is `rune_kit::search::Fold`, ignoring case and accents left out, as browsers find. It runs on the UI thread on every build while the bar shows; fine for hunks and single files, to revisit if a huge diff stutters.
+
+Tasks:
+
+- [x] Find in the review's diff, the comments page and the overlay's file, with Ctrl+F or the magnifier
+- [ ] Rune issue: highlight ranges within a diff's lines, for the matches
+
 ### Later
 
 Order open, plan each when it comes up: reviewing pull requests on GitHub and Forgejo/Gitea, worktrees (below), the file overlay's follow-ups (below), commit graph, hunk and line staging.

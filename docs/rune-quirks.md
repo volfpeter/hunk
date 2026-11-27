@@ -33,6 +33,7 @@ Check with a long string without spaces, in a narrow window.
 - A fitted dialog taller than the window runs off both ends, title and close button included. Keep it short, or scroll its body. A view doesn't know the window's height, so a list that can grow takes a fixed `max_h` and scrolls.
 - `Dialog` always centres its panel. To place it elsewhere, re-align the layer it pushes last, as the palette does. That layer is a column, so its vertical axis is `justify_*`; `items_*` moves the panel sideways.
 - `Dialog` is either 368 points tall or as tall as its content. A panel filling the window is a layer of our own, with `El::modal` as `Dialog` uses.
+- A text field in a layer above a modal one takes focus and shows it, but gets no typing. A field floating over a modal panel goes inside the panel.
 
 ## Scrolling
 

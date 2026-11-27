@@ -40,6 +40,8 @@ The file list and the diff go by path, folders first.
 
 Unchanged lines between changes fold into a bar that says how many. The arrows on its left show 20 more lines next to the change they point at, and clicking the count shows 20 at each end. Shift-click either one to show them all. Folds close again when the diff updates.
 
+**Ctrl+F**, or the magnifier in the top bar, opens a find field floating in the middle of the bar. It finds text in the diff as you type, ignoring case. It looks in the changes and the lines around them, not in folded lines. The line found is selected, and the field says which of how many it is. **Enter** goes to the next one, **Shift+Enter** to the one before, and from the last it goes round to the first. It finds from the line you selected, or from the top of the file you're at. **Escape** closes the field and leaves the line selected, so in Changes and Staging the full-screen button in the file's header opens the file right there.
+
 Everything updates by itself when the repository changes, so you can read while an agent edits. You stay where you are in the diff, and a comment you're writing is kept. If a file above you joins or leaves the diff, you stay in your file but go back to its start. **Git: Refresh** in the [command palette](#commands) is there in case something was missed.
 
 ## Read any file
@@ -51,6 +53,8 @@ The full-screen button at the end of a file's header in the diff, or **File: Ope
 It shows what is on disk now, whatever the review compares, and updates when the file changes. **Escape** closes it, and the review is as you left it. Opening it again brings back the same file, where you were.
 
 To look around instead, **Ctrl+E**, or **File: Browse files**, opens the overlay on a tree of the files, the changed ones marked with a dot. Click a file to open it, or move to it with the arrow keys. The file you open shows selected in the tree. **Ctrl+E** in the overlay, or the panel icon in its header, shows or hides the tree, and it stays that way next time.
+
+**Ctrl+F**, or the magnifier at the top of the overlay, finds in the whole file, as in the diff, with the field floating over the overlay's toolbar. **Escape** closes the field first, then the overlay.
 
 **Alt+←** and **Alt+→**, or the arrows at the top of the overlay, go back and forward through the files you opened, each where you left it.
 

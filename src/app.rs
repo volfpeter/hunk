@@ -15,6 +15,7 @@ use serde::{Deserialize, Serialize};
 use crate::action::{Action, Integration, Stashed};
 use crate::browse::{BROWSED_SCROLL, Browser, RecentFiles};
 use crate::comments::{Anchor, Comment, Comments, Group, prompt};
+use crate::find::{self, Step};
 use crate::forge::Hosted;
 use crate::fuzzy;
 use crate::gh::{self, PullRequest};
@@ -184,6 +185,7 @@ pub const MERGE: &str = "Ctrl+Shift+M";
 pub const PULL_REQUEST: &str = "Ctrl+Shift+R";
 pub const FILE_PICKER: &str = "Ctrl+P";
 pub const BROWSE_FILES: &str = "Ctrl+E";
+pub const FIND: &str = "Ctrl+F";
 /// The key of each view of the repository, in the order of `Kind::ALL`.
 const VIEWS: [&str; 5] = ["Ctrl+1", "Ctrl+2", "Ctrl+3", "Ctrl+4", "Ctrl+5"];
 pub const COMMENTS: &str = "Ctrl+0";
@@ -306,6 +308,9 @@ pub struct State {
     pub palette_text: TextEdit,
     /// The highlighted row of the command palette, while it is open.
     pub palette: Option<usize>,
+    /// Whether the find bar shows, over the diff on screen.
+    pub finding: bool,
+    pub find_text: TextEdit,
     /// Whether the list of keys is open.
     pub showing_keys: bool,
     pub row_menu: Option<RowMenu>,
@@ -385,6 +390,8 @@ impl State {
             watch_error: None,
             palette_text: TextEdit::default(),
             palette: None,
+            finding: false,
+            find_text: TextEdit::default(),
             showing_keys: false,
             row_menu: None,
             shown: None,
@@ -525,6 +532,12 @@ impl State {
             }
             return true;
         }
+        if event.is_command('f') {
+            if self.browser.picker.is_none() && (self.browser.open || !self.dialog_open()) {
+                self.open_find();
+            }
+            return true;
+        }
         if event.is_command('o') {
             if !self.dialog_open() {
                 self.open_opener();
@@ -538,11 +551,21 @@ impl State {
             }
             return true;
         }
-        self.active_diff().key(event, tx)
+        self.active_diff_mut().key(event, tx)
     }
 
     /// The diff on screen: the file overlay's, the review's, or the comments page.
-    fn active_diff(&mut self) -> &mut DiffState {
+    pub fn active_diff(&self) -> &DiffState {
+        if self.browser.open {
+            &self.browser.diff
+        } else if self.showing_comments {
+            &self.comment_sheet
+        } else {
+            &self.diff
+        }
+    }
+
+    fn active_diff_mut(&mut self) -> &mut DiffState {
         if self.browser.open {
             &mut self.browser.diff
         } else if self.showing_comments {
@@ -1615,6 +1638,33 @@ impl State {
         self.palette = None;
     }
 
+    /// Shows the find bar, its text selected.
+    pub fn open_find(&mut self) {
+        self.palette = None;
+        self.finding = true;
+        self.find_text.set_selection(0, self.find_text.text.len());
+        self.focus(|s| &mut s.find_text);
+    }
+
+    pub fn toggle_find(&mut self) {
+        if self.finding { self.close_find() } else { self.open_find() }
+    }
+
+    pub fn close_find(&mut self) {
+        self.finding = false;
+        self.find_text.focused = false;
+    }
+
+    /// Selects the line of the diff on screen that `step` finds, and scrolls to it.
+    pub fn find(&mut self, step: Step, tx: &mut Tx) {
+        let query = self.find_text.text.clone();
+        let diff = self.active_diff_mut();
+        let found = find::find(diff.files(), &query);
+        let Some(lines) = find::go(&found, diff.files(), diff.selection(), diff.visible_file(), step).map(|found| found.lines) else { return };
+        diff.set_selection(Some(lines));
+        diff.scroll_to_line(lines.file, lines.start, tx);
+    }
+
     pub fn open_keys(&mut self) {
         self.palette = None;
         self.showing_keys = true;
@@ -1811,8 +1861,9 @@ impl State {
             (files > 0, "Next hunk", "j", DiffState::next_hunk, true),
             (files > 0, "Previous hunk", "k", DiffState::next_hunk, false),
         ];
+        offer(true, Command::new("Navigation", "Find", |s, _| s.open_find()).shortcut(FIND));
         for (available, label, key, step, forward) in moves {
-            offer(available, Command::new("Navigation", label, move |s, tx| _ = step(s.active_diff(), forward, tx)).shortcut(key));
+            offer(available, Command::new("Navigation", label, move |s, tx| _ = step(s.active_diff_mut(), forward, tx)).shortcut(key));
         }
         commands
     }
@@ -1879,7 +1930,7 @@ impl State {
 
     /// Gives the keyboard to one text field, which takes it from every other.
     fn focus(&mut self, field: fn(&mut State) -> &mut TextEdit) {
-        let fields = [&mut self.draft_text, &mut self.edit_text, &mut self.commit_text, &mut self.stash_text, &mut self.branch_text, &mut self.remote_name_text, &mut self.remote_url_text, &mut self.merge_text, &mut self.palette_text, &mut self.shell.open_text, &mut self.browser.picker_text];
+        let fields = [&mut self.draft_text, &mut self.edit_text, &mut self.commit_text, &mut self.stash_text, &mut self.branch_text, &mut self.remote_name_text, &mut self.remote_url_text, &mut self.merge_text, &mut self.palette_text, &mut self.find_text, &mut self.shell.open_text, &mut self.browser.picker_text];
         for text in fields {
             text.focused = false;
         }
