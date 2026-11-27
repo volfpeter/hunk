@@ -1,6 +1,7 @@
 //! What can be done to a repository.
 
 use crate::git::{GitError, Repo, Result};
+use crate::overview::Tracking;
 use crate::review::stash_commit;
 
 /// A change to the repository. Stashes go by hash, since `stash@{n}` shifts.
@@ -41,6 +42,8 @@ pub enum Action {
     DropStash(String),
     /// Fetches every remote, dropping what each no longer has.
     Fetch,
+    /// Fast-forwards a local branch to what it tracks, without checking it out.
+    Update { branch: String, from: Tracking },
     Pull,
     Push,
     /// Replaces the upstream with the branch, unless it holds commits not fetched yet.
@@ -109,6 +112,7 @@ impl Action {
             Action::PopStash(_) => "Pop",
             Action::DropStash(_) => "Drop",
             Action::Fetch => "Fetch",
+            Action::Update { .. } => "Update",
             Action::Pull => "Pull",
             Action::Push => "Push",
             Action::ForcePush => "Force push",
@@ -139,6 +143,7 @@ impl Action {
             Action::PopStash(_) => "Popped the stash",
             Action::DropStash(_) => "Dropped the stash",
             Action::Fetch => "Fetched",
+            Action::Update { branch, .. } => return Some(format!("Updated {branch}")),
             Action::Pull => "Pulled",
             Action::Push => "Pushed",
             Action::ForcePush => "Force pushed",
@@ -174,6 +179,7 @@ impl Action {
             Action::PopStash(stash) => repo.run(&["stash", "pop", &stash_ref(repo, stash)?]).map(drop),
             Action::DropStash(stash) => repo.run(&["stash", "drop", &stash_ref(repo, stash)?]).map(drop),
             Action::Fetch => repo.run(&["fetch", "--all", "--prune"]).map(drop),
+            Action::Update { branch, from } => repo.run(&["fetch", &from.remote, &format!("refs/heads/{}:refs/heads/{branch}", from.branch)]).map(drop),
             Action::Pull => repo.run(&["pull"]).map(drop),
             Action::Push => push(repo),
             Action::ForcePush => repo.run(&["push", "--force-with-lease"]).map(drop),
@@ -433,6 +439,30 @@ mod tests {
 
         Action::RemoveRemote("origin".into()).run(&clone.repo).unwrap();
         assert_eq!(clone.git(&["remote"]), "");
+    }
+
+    #[test]
+    fn updates_a_branch_without_checking_it_out_but_only_by_fast_forward() {
+        let origin = Fixture::new();
+        origin.commit("a.txt", "one\n", "first");
+        origin.git(&["branch", "feature"]);
+        let clone = Fixture::new();
+        clone.git(&["remote", "add", "origin", origin.repo.root().to_str().unwrap()]);
+        clone.git(&["fetch", "-q", "origin"]);
+        clone.git(&["switch", "-q", "-c", "main", "--track", "origin/main"]);
+        clone.git(&["branch", "-q", "--track", "feature", "origin/feature"]);
+        origin.git(&["switch", "-q", "feature"]);
+        origin.commit("b.txt", "two\n", "second");
+        let update = Action::Update { branch: "feature".into(), from: Tracking { remote: "origin".into(), branch: "feature".into() } };
+
+        update.run(&clone.repo).unwrap();
+        assert_eq!(clone.git(&["log", "-1", "--format=%s", "feature"]), "second\n");
+
+        clone.git(&["switch", "-q", "feature"]);
+        clone.commit("c.txt", "mine\n", "mine");
+        clone.git(&["switch", "-q", "main"]);
+        origin.commit("d.txt", "theirs\n", "theirs");
+        assert!(update.run(&clone.repo).is_err(), "the branches went apart");
     }
 
     fn stash(fixture: &Fixture, takes: Stashed) {

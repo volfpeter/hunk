@@ -18,6 +18,7 @@ use crate::comments::{Anchor, Comment, Comments, Group, prompt};
 use crate::forge::Hosted;
 use crate::fuzzy;
 use crate::gh::{self, PullRequest};
+use crate::menu::RowMenu;
 use crate::git::{Repo, Result};
 use crate::open::{Choice, Offer, Opened, resolve};
 use crate::overview::{Change, Entry, FileStatus, LastCommit, LineCounts, Operation, Overview};
@@ -307,6 +308,7 @@ pub struct State {
     pub palette: Option<usize>,
     /// Whether the list of keys is open.
     pub showing_keys: bool,
+    pub row_menu: Option<RowMenu>,
     shown: Option<Shown>,
     /// The comment to scroll to once its review is on screen.
     reveal: Option<u64>,
@@ -384,6 +386,7 @@ impl State {
             palette_text: TextEdit::default(),
             palette: None,
             showing_keys: false,
+            row_menu: None,
             shown: None,
             reveal: None,
             copied: Notice::new(COPIED_FOR),
@@ -674,6 +677,7 @@ impl State {
 
     pub fn select_kind(&mut self, kind: Kind) {
         self.showing_comments = false;
+        self.row_menu = None;
         self.kind = kind;
         self.shell.shared.borrow_mut().settings.set_kind(kind);
         self.list.clear_selection();
@@ -1051,7 +1055,7 @@ impl State {
 
     /// The last commit, while undoing it can leave its changes staged: it has one parent, and
     /// no merge or rebase is under way.
-    fn undoable(&self) -> Option<&LastCommit> {
+    pub fn undoable(&self) -> Option<&LastCommit> {
         self.overview.last_commit.as_ref().filter(|commit| commit.parents == 1 && self.overview.operation.is_none())
     }
 
@@ -1829,7 +1833,7 @@ impl State {
 
     fn dialog_open(&self) -> bool {
         let pickers = self.switcher.is_some() || self.merger.is_some() || self.shell.opener.is_some() || self.browser.open || self.browser.picker.is_some();
-        let dialogs = self.deleting.is_some() || self.deleting_group.is_some() || self.confirming.is_some() || self.committing || self.stashing.is_some() || self.managing_remotes || self.action_failure.is_some() || self.showing_keys;
+        let dialogs = self.deleting.is_some() || self.deleting_group.is_some() || self.confirming.is_some() || self.committing || self.stashing.is_some() || self.managing_remotes || self.action_failure.is_some() || self.showing_keys || self.row_menu.is_some();
         pickers || dialogs
     }
 
@@ -2090,7 +2094,7 @@ pub fn copy_label(count: usize) -> String {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use std::collections::HashMap;
 
     use super::*;
@@ -2100,7 +2104,7 @@ mod tests {
     const TWO_FILES: &str = "diff --git a/a.txt b/a.txt\n--- a/a.txt\n+++ b/a.txt\n@@ -1 +1 @@\n-a\n+A\ndiff --git a/c.txt b/c.txt\n--- a/c.txt\n+++ b/c.txt\n@@ -1 +1 @@\n-c\n+C\n";
     const THREE_FILES: &str = "diff --git a/a.txt b/a.txt\n--- a/a.txt\n+++ b/a.txt\n@@ -1 +1 @@\n-a\n+A\ndiff --git a/b.txt b/b.txt\n--- a/b.txt\n+++ b/b.txt\n@@ -1 +1 @@\n-b\n+B\ndiff --git a/c.txt b/c.txt\n--- a/c.txt\n+++ b/c.txt\n@@ -1 +1,2 @@\n-c\n+C\n+D\n";
 
-    fn state() -> (Fixture, State) {
+    pub(crate) fn state() -> (Fixture, State) {
         let fixture = Fixture::new();
         let state = State::new(Some(Opened::Repository(fixture.repo.clone(), Comments::load(&fixture.repo), RecentFiles::default())), Shell::default());
         (fixture, state)
@@ -2114,7 +2118,7 @@ mod tests {
         state.diff.files().iter().map(|file| file.path()).collect()
     }
 
-    fn status(staged: bool, unstaged: bool) -> FileStatus {
+    pub(crate) fn status(staged: bool, unstaged: bool) -> FileStatus {
         FileStatus { staged: staged.then_some(Change::Changed), unstaged: unstaged.then_some(Change::Changed) }
     }
 

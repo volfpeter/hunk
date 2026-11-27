@@ -9,6 +9,7 @@ mod fuzzy;
 mod gh;
 mod git;
 mod kept;
+mod menu;
 mod open;
 mod overview;
 mod recent;

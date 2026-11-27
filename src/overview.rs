@@ -3,6 +3,7 @@
 
 use std::collections::HashMap;
 use std::fs;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::forge::Hosted;
 use crate::git::{Repo, Result};
@@ -114,6 +115,21 @@ pub struct Remote {
     pub url: String,
 }
 
+/// The remote branch a local one tracks.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Tracking {
+    pub remote: String,
+    /// Its name on the remote.
+    pub branch: String,
+}
+
+impl Tracking {
+    /// What git calls it, like `origin/main`.
+    pub fn id(&self) -> String {
+        format!("{}/{}", self.remote, self.branch)
+    }
+}
+
 /// How far the current branch and the branch it tracks have moved apart.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Upstream {
@@ -131,6 +147,8 @@ pub struct Overview {
     pub commits: Vec<Entry>,
     /// The local branches, newest first.
     pub branches: Vec<Entry>,
+    /// What each local branch tracks, by name, for those that track one.
+    pub tracking: HashMap<String, Tracking>,
     /// Newest first.
     pub remote_branches: Vec<RemoteBranch>,
     pub remotes: Vec<Remote>,
@@ -151,7 +169,7 @@ pub struct Overview {
 
 impl Overview {
     pub fn load(repo: &Repo) -> Result<Overview> {
-        let branches = branches(repo)?;
+        let (branches, tracking) = branches(repo)?;
         let remotes = remotes(repo)?;
         Ok(Overview {
             head: head(repo)?,
@@ -161,6 +179,7 @@ impl Overview {
             hosted: hosted(&remotes),
             remotes,
             branches,
+            tracking,
             stashes: stashes(repo)?,
             files: file_statuses(repo)?,
             staged_lines: staged_lines(repo)?,
@@ -257,37 +276,45 @@ fn commits(repo: &Repo) -> Result<Vec<Entry>> {
     if repo.head_commit()?.is_none() {
         return Ok(Vec::new());
     }
-    let log = repo.run(&["log", "-n", COMMIT_LIMIT, "-z", "--format=%h%x1f%s%x1f%ar"])?;
+    let log = repo.run(&["log", "-n", COMMIT_LIMIT, "-z", "--format=%h%x1f%s%x1f%at"])?;
+    let now = now();
     Ok(log
         .split_terminator('\0')
         .filter_map(|record| {
             let (hash, rest) = record.split_once(FIELD)?;
-            let (subject, age) = rest.split_once(FIELD)?;
-            Some(Entry { id: hash.to_owned(), title: subject.to_owned(), detail: format!("{hash} · {age}") })
+            let (subject, time) = rest.split_once(FIELD)?;
+            Some(Entry { id: hash.to_owned(), title: subject.to_owned(), detail: format!("{hash} · {}", age(time, now)) })
         })
         .collect())
 }
 
-fn branches(repo: &Repo) -> Result<Vec<Entry>> {
-    let refs = repo.run(&["for-each-ref", "--sort=-committerdate", "--format=%(refname:short)%1f%(committerdate:relative)", "refs/heads"])?;
-    Ok(refs
-        .lines()
-        .filter_map(|line| {
-            let (name, age) = line.split_once(FIELD)?;
-            Some(Entry { id: name.to_owned(), title: name.to_owned(), detail: age.to_owned() })
-        })
-        .collect())
+fn branches(repo: &Repo) -> Result<(Vec<Entry>, HashMap<String, Tracking>)> {
+    let format = "--format=%(refname:short)%1f%(committerdate:unix)%1f%(upstream:remotename)%1f%(upstream:remoteref)";
+    let refs = repo.run(&["for-each-ref", "--sort=-committerdate", format, "refs/heads"])?;
+    let now = now();
+    let (mut branches, mut tracking) = (Vec::new(), HashMap::new());
+    for line in refs.lines() {
+        let mut fields = line.split(FIELD);
+        let (Some(name), Some(time), Some(remote), Some(merge)) = (fields.next(), fields.next(), fields.next(), fields.next()) else { continue };
+        branches.push(Entry { id: name.to_owned(), title: name.to_owned(), detail: age(time, now) });
+        // A branch tracking another local one has `.` for its remote.
+        if let Some(branch) = merge.strip_prefix("refs/heads/").filter(|_| !remote.is_empty() && remote != ".") {
+            tracking.insert(name.to_owned(), Tracking { remote: remote.to_owned(), branch: branch.to_owned() });
+        }
+    }
+    Ok((branches, tracking))
 }
 
 /// The branches of `remotes` that no local branch is named after. A remote's name may hold `/`,
 /// so the longest that starts the ref wins.
 fn remote_branches(repo: &Repo, remotes: &[Remote], local: &[Entry]) -> Result<Vec<RemoteBranch>> {
-    let refs = repo.run(&["for-each-ref", "--sort=-committerdate", "--format=%(refname:lstrip=2)%1f%(symref)%1f%(committerdate:relative)", "refs/remotes"])?;
+    let refs = repo.run(&["for-each-ref", "--sort=-committerdate", "--format=%(refname:lstrip=2)%1f%(symref)%1f%(committerdate:unix)", "refs/remotes"])?;
+    let now = now();
     Ok(refs
         .lines()
         .filter_map(|line| {
             let mut fields = line.split(FIELD);
-            let (id, symref, age) = (fields.next()?, fields.next()?, fields.next()?);
+            let (id, symref, time) = (fields.next()?, fields.next()?, fields.next()?);
             // `<remote>/HEAD` points at another branch.
             if !symref.is_empty() {
                 return None;
@@ -295,21 +322,43 @@ fn remote_branches(repo: &Repo, remotes: &[Remote], local: &[Entry]) -> Result<V
             let remote = remotes.iter().filter(|remote| id.strip_prefix(&remote.name).is_some_and(|rest| rest.starts_with('/'))).max_by_key(|remote| remote.name.len())?;
             let name = &id[remote.name.len() + 1..];
             let only_remote = !local.iter().any(|branch| branch.id == name);
-            only_remote.then(|| RemoteBranch { remote: remote.name.clone(), name: name.to_owned(), age: age.to_owned() })
+            only_remote.then(|| RemoteBranch { remote: remote.name.clone(), name: name.to_owned(), age: age(time, now) })
         })
         .collect())
 }
 
 fn stashes(repo: &Repo) -> Result<Vec<Entry>> {
-    let list = repo.run(&["stash", "list", "-z", "--format=%h%x1f%s%x1f%cr"])?;
+    let list = repo.run(&["stash", "list", "-z", "--format=%h%x1f%s%x1f%ct"])?;
+    let now = now();
     Ok(list
         .split_terminator('\0')
         .filter_map(|record| {
             let (hash, rest) = record.split_once(FIELD)?;
-            let (subject, age) = rest.split_once(FIELD)?;
-            Some(Entry { id: hash.to_owned(), title: subject.to_owned(), detail: age.to_owned() })
+            let (subject, time) = rest.split_once(FIELD)?;
+            Some(Entry { id: hash.to_owned(), title: subject.to_owned(), detail: age(time, now) })
         })
         .collect())
+}
+
+/// Seconds since the Unix epoch.
+fn now() -> i64 {
+    SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |since| since.as_secs() as i64)
+}
+
+/// How long before `now` the Unix time `time` was, shortly: `18h ago`. Empty when git gave no time.
+fn age(time: &str, now: i64) -> String {
+    let Ok(time) = time.parse::<i64>() else { return String::new() };
+    let seconds = (now - time).max(0);
+    let (minute, hour, day) = (60, 3600, 86_400);
+    match seconds {
+        s if s < minute => "just now".to_owned(),
+        s if s < hour => format!("{}m ago", s / minute),
+        s if s < day => format!("{}h ago", s / hour),
+        s if s < 7 * day => format!("{}d ago", s / day),
+        s if s < 30 * day => format!("{}w ago", s / (7 * day)),
+        s if s < 365 * day => format!("{}mo ago", s / (30 * day)),
+        s => format!("{}y ago", s / (365 * day)),
+    }
 }
 
 fn file_statuses(repo: &Repo) -> Result<HashMap<String, FileStatus>> {
@@ -415,6 +464,32 @@ mod tests {
         assert_eq!(branches, ["feature", "main"]);
         assert_eq!(overview.stashes[0].id, fixture.git(&["rev-parse", "--short", "stash@{0}"]).trim());
         assert!(overview.stashes[0].title.contains("parked"));
+    }
+
+    #[test]
+    fn ages_are_short() {
+        let now = 1_000_000_000;
+        let ago = |seconds: i64| age(&(now - seconds).to_string(), now);
+        assert_eq!([ago(5), ago(5 * 60), ago(18 * 3600), ago(3 * 86_400), ago(15 * 86_400), ago(70 * 86_400), ago(800 * 86_400)], ["just now", "5m ago", "18h ago", "3d ago", "2w ago", "2mo ago", "2y ago"]);
+        assert_eq!(age("", now), "");
+    }
+
+    #[test]
+    fn knows_what_each_branch_tracks() {
+        let origin = Fixture::new();
+        origin.commit("a.txt", "one\n", "first");
+        origin.git(&["branch", "user/feature"]);
+        let clone = Fixture::new();
+        clone.git(&["remote", "add", "origin", origin.repo.root().to_str().unwrap()]);
+        clone.git(&["fetch", "-q", "origin"]);
+        clone.git(&["switch", "-q", "-c", "mine", "--track", "origin/user/feature"]);
+        clone.git(&["branch", "-q", "local"]);
+        clone.git(&["branch", "-q", "--set-upstream-to=local", "local"]);
+
+        let tracking = Overview::load(&clone.repo).unwrap().tracking;
+
+        assert_eq!(tracking.len(), 1);
+        assert_eq!(tracking["mine"].id(), "origin/user/feature");
     }
 
     #[test]

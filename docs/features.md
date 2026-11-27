@@ -135,6 +135,13 @@ Everything the app does, to try at your own pace. A tick means Peter tried it an
 - [ ] Name a stash
 - [ ] Apply, pop and drop a stash
 - [ ] Double-click a stash to apply it
+- [ ] Double-click a branch, or press Enter on it, to check it out
+- [ ] Every row of a list has a ⋯ menu, also opened by a right-click or the Menu key, acting on that row without showing it
+- [ ] A branch's menu: check out, update from the branch it tracks without checking it out (fast-forward only), merge or rebase, copy the name, delete; the current branch's: pull, push, copy the name
+- [ ] A stash's menu: apply, pop, drop
+- [ ] A commit's menu copies its hash; the last commit's also undoes it
+- [ ] A file's menu: stage or unstage, open it in the file overlay, copy its path, discard
+- [ ] Branches, commits and stashes say how long ago they changed, shortly (18h ago), right after their name; the branch dialogs say it the same way
 - [ ] Pull (only tried against a local repository so far)
 - [ ] Push, publishing a new branch to `origin` (only tried against a local repository so far)
 - [ ] Commit, Pull and Push sit at the right of the bar, their keys in their tooltips

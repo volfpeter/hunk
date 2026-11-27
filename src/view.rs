@@ -3,13 +3,14 @@
 use rune::{Color, Cx, El, Icon, ScrollSpec, TextEdit, TextStyle, Tx, col, el, icon, row, text};
 use rune::{Key, KeyEvent, Mods};
 use rune_kit::diff::{Annotation, DiffMode, DiffView, FoldRow};
-use rune_kit::{Badge, Button, ButtonVariant, ControlSize, Dialog, FileNode, IconButton, IconButtonVariant, Kit, RadioGroup, RadioItem, SegmentedControl, Spinner, TextArea, TextInput, Toast, ToastRegion, Tree, TreeItem, TreeModel, TreeStyle, root};
+use rune_kit::{Badge, Button, ButtonVariant, ControlSize, Dialog, FileNode, IconButton, IconButtonVariant, Kit, Menu, MenuItem, RadioGroup, RadioItem, SegmentedControl, Spinner, TextArea, TextInput, Toast, ToastRegion, Tree, TreeItem, TreeModel, TreeStyle, root};
 
 use crate::action::{Action, Integration, Stashed};
 use crate::browse::{BROWSED, BROWSED_SCROLL};
 use crate::app::{APPLICATION, BROWSE_FILES, COMMENTS, COMMIT, COPY, Command, DRAFT_NOTE, FILE_PICKER, KEYS, Kind, MERGE, PALETTE, PULL, PULL_REQUEST, PUSH, PullRequestOffer, State, Target, copy_label};
 use crate::comments::{Comment, Group};
 use crate::gh::{PullRequest, Status};
+use crate::menu::{Row, RowAction};
 use crate::open::{Choice, tilde};
 use crate::overview::{CommitPlan, Entry, LineCounts, Operation};
 use crate::review::Review;
@@ -55,6 +56,9 @@ const BROWSE_MARGIN: f32 = 24.0;
 const FILE_PICKER_TOP: f32 = 8.0;
 const FILE_PICKER_WIDTH: f32 = 640.0;
 const FILE_TREE_WIDTH: f32 = 280.0;
+/// Grows far more than a tree row's empty label, so the row's own content sits at its start.
+const PUSH_RIGHT: f32 = 10_000.0;
+const ROW_MENU_WIDTH: f32 = 260.0;
 
 /// Two points compared, neither leading to the other.
 static COMPARED: Icon = Icon {
@@ -124,6 +128,13 @@ static KEYS_ICON: Icon = Icon {
     name: "hunk-keys",
     view: 16.0,
     body: r#"<circle cx="8" cy="8" r="6.25" stroke="currentColor" stroke-width="1.5" fill="none"/><path d="M6.25 6.25C6.25 5.25 7 4.5 8 4.5C9 4.5 9.75 5.25 9.75 6.15C9.75 7.5 8 7.6 8 9" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" fill="none"/><circle cx="8" cy="11.5" r="0.9" fill="currentColor"/>"#,
+};
+
+/// More actions: three dots.
+static MORE_ICON: Icon = Icon {
+    name: "hunk-more",
+    view: 16.0,
+    body: r#"<circle cx="3.5" cy="8" r="1.25" fill="currentColor"/><circle cx="8" cy="8" r="1.25" fill="currentColor"/><circle cx="12.5" cy="8" r="1.25" fill="currentColor"/>"#,
 };
 
 /// Resolving: a check in a circle.
@@ -213,6 +224,7 @@ pub fn view(s: &State, cx: &mut Cx<State>) -> El {
     commit_dialog(s, &k, &mut overlays);
     stash_dialog(s, &k, &mut overlays);
     failure_dialog(s, &k, &mut overlays);
+    row_menu(s, &k, &mut overlays);
     palette_dialog(s, &k, &mut overlays);
     open_dialog(s, &k, &mut overlays);
     branch_dialog(s, &k, &mut overlays);
@@ -442,7 +454,7 @@ fn staged(s: &State, k: &Kit) -> El {
         return column.child(header).child(muted(k, "Nothing staged"));
     }
     let (kit, idle) = (k.clone(), s.running.is_none());
-    let tree = file_tree(|s| &s.staged, |s| &mut s.staged, move |node, item| {
+    let tree = file_tree(k, |s| &s.staged, |s| &mut s.staged, Row::Staged, move |node, item| {
         item.trailing(row_action(&kit, "Unstage", idle, &node.path, |s, path| s.run(Action::Unstage(s.unstageable_in(path)))))
     });
     let tree = tree.name("Staged files").on_select(|s: &mut State, path, tx| s.scroll_to_staged(path, tx));
@@ -450,37 +462,30 @@ fn staged(s: &State, k: &Kit) -> El {
 }
 
 fn entries(s: &State, k: &Kit) -> El {
-    let column = col().key("entries").grow(1.0).min_w(0.0).h_full().padding(8.0).gap(4.0).children(list_actions(s, k));
+    let column = col().key("entries").grow(1.0).min_w(0.0).h_full().padding(8.0).gap(4.0).children(branches_header(s, k));
     if s.list.is_empty() {
         return column.child(text(format!("No {}", s.kind.label().to_lowercase())).font(k.ty.ui).color(k.c.text_muted));
     }
-    let (detail_font, detail_color) = (k.ty.text_small, k.c.text_faint);
+    let (kit, kind) = (k.clone(), s.kind);
     let list = Tree::new(|s: &State| &s.list, |s: &mut State| &mut s.list, |entry: &Entry| entry.title.as_str())
         .name(s.kind.label())
-        .row(move |entry, _| TreeItem::new(entry.title.clone()).trailing(one_line(entry.detail.clone()).truncate_head().max_w(DETAIL_MAX_WIDTH).font(detail_font).color(detail_color)))
-        .on_select(|s: &mut State, _, _| s.show_selected());
-    let list = if s.kind == Kind::Stashes { list.on_open(|s: &mut State, stash, _| s.run(Action::ApplyStash(stash.to_owned()))) } else { list };
-    let list = list
-        .build(s, k)
-        .grow(1.0)
-        .min_h(0.0);
-    column.child(list)
+        .row(move |entry, _| {
+            // Ours rather than the item's label, which takes all the room the row leaves.
+            let title = one_line(entry.title.clone()).font(kit.ty.ui).color(kit.c.text_base);
+            let detail = text(entry.detail.clone()).font(kit.ty.ui).color(kit.c.text_faint);
+            let more = more_button(&kit, Row::Entry(kind, entry.id.clone()));
+            TreeItem::new(String::new()).trailing(title).trailing(detail).trailing(el().grow(PUSH_RIGHT)).trailing(more)
+        })
+        .on_select(|s: &mut State, _, _| s.show_selected())
+        .on_open(|s: &mut State, id, _| s.open_entry(id))
+        .on_menu(move |s: &mut State, id, at, _| s.open_row_menu(Row::Entry(kind, id.to_owned()), (at.x, at.y)));
+    column.child(list.build(s, k).grow(1.0).min_h(0.0))
 }
 
-/// What sits above the list: what can be done to its selected entry.
-fn list_actions(s: &State, k: &Kit) -> Option<El> {
-    match s.kind {
-        Kind::Branches => Some(branch_actions(s, k)),
-        Kind::Stashes if !s.list.is_empty() => Some(stash_actions(s, k)),
-        _ => None,
-    }
-}
-
-fn branch_actions(s: &State, k: &Kit) -> El {
-    let idle = s.running.is_none();
-    list_header(k, format!("On {}", s.overview.head))
-        .child(small_button("Check out").disabled(!idle || s.branch_to_check_out().is_none()).on_press(State::check_out_selected).build(k))
-        .children(s.pull_request_offer().map(|offer| pull_request(k, offer)))
+/// What sits above the list of branches: the current one, and the pull request of the one under
+/// review.
+fn branches_header(s: &State, k: &Kit) -> Option<El> {
+    (s.kind == Kind::Branches).then(|| list_header(k, format!("On {}", s.overview.head)).children(s.pull_request_offer().map(|offer| pull_request(k, offer))))
 }
 
 /// The selected branch's pull request, or a way to create one, opening in the browser.
@@ -498,18 +503,6 @@ fn pull_request(k: &Kit, offer: PullRequestOffer) -> El {
     row().gap(4.0).items_center().min_w(0.0).child(button).child(Badge::new(existing.status.label()).build(k))
 }
 
-fn stash_actions(s: &State, k: &Kit) -> El {
-    let busy = s.running.is_some();
-    let count = match s.overview.stashes.len() {
-        1 => "1 stash".to_owned(),
-        n => format!("{n} stashes"),
-    };
-    list_header(k, count)
-        .child(small_button("Apply").disabled(busy).help("Bring the changes back and keep the stash").on_press(State::apply_selected_stash).build(k))
-        .child(small_button("Pop").disabled(busy).help("Bring the changes back and remove the stash").on_press(State::pop_selected_stash).build(k))
-        .child(small_button("Drop").disabled(busy).on_press(State::ask_to_drop_stash).build(k))
-}
-
 /// A row saying `summary`, ready for buttons at its end.
 fn list_header(k: &Kit, summary: String) -> El {
     row().w_full().gap(4.0).px(8.0).h(24.0).items_center().child(one_line(summary).font(k.ty.ui).color(k.c.text_muted)).child(row().grow(1.0))
@@ -520,7 +513,7 @@ fn files(s: &State, k: &Kit) -> El {
     let column = col().key("files-column").grow(1.0).min_w(0.0).h_full().padding(8.0).gap(4.0);
     let (kit, worktree, idle) = (k.clone(), !s.kind.has_list(), s.running.is_none());
     let conflicted: Vec<String> = s.overview.conflicted().into_iter().map(str::to_owned).collect();
-    let tree = file_tree(|s| &s.files, |s| &mut s.files, move |node, item| {
+    let tree = file_tree(k, |s| &s.files, |s| &mut s.files, Row::File, move |node, item| {
         if !worktree {
             return item;
         }
@@ -537,20 +530,66 @@ fn files(s: &State, k: &Kit) -> El {
     column.child(header).child(if s.files.is_empty() { muted(k, "Nothing unstaged") } else { tree })
 }
 
-/// A tree of files with their changed lines, `decorate` adding to each row.
+/// A tree of files with their changed lines, `decorate` adding to each row, and each row's menu
+/// for the row `row` makes of its path.
 fn file_tree(
+    k: &Kit,
     get: fn(&State) -> &TreeModel<FileNode<LineCounts>>,
     get_mut: fn(&mut State) -> &mut TreeModel<FileNode<LineCounts>>,
+    row: fn(String) -> Row,
     decorate: impl Fn(&FileNode<LineCounts>, TreeItem) -> TreeItem + 'static,
 ) -> Tree<State, FileNode<LineCounts>> {
-    Tree::new(get, get_mut, FileNode::label).row(move |node, row| {
-        let item = TreeItem::file(node, row);
+    let kit = k.clone();
+    let tree = Tree::new(get, get_mut, FileNode::label).row(move |node, tree_row| {
+        let item = TreeItem::file(node, tree_row);
         let item = match node.data {
             Some((added, removed)) => item.changes(added, removed),
             None => item,
         };
-        decorate(node, item)
-    })
+        decorate(node, item).trailing(more_button(&kit, row(node.path.clone())))
+    });
+    tree.on_menu(move |s: &mut State, path, at, _| s.open_row_menu(row(path.to_owned()), (at.x, at.y)))
+}
+
+/// The button opening `row`'s menu, under itself.
+fn more_button(k: &Kit, row: Row) -> El {
+    let (Row::Entry(_, id) | Row::File(id) | Row::Staged(id)) = &row;
+    let scope = match row {
+        Row::Entry(..) => "entry",
+        Row::File(_) => "file",
+        Row::Staged(_) => "staged",
+    };
+    // A key path splits at `/`, which branch names and paths hold.
+    let key = format!("more-{scope}-{}", id.replace('/', "\\"));
+    let anchor = key.clone();
+    let button = IconButton::new(&MORE_ICON).variant(IconButtonVariant::GhostMuted).control_size(ControlSize::Small).label("More actions").help("More actions");
+    let button = button.on_press_tx(move |_: &mut State, tx: &mut Tx| {
+        let row = row.clone();
+        tx.read_layout(anchor.clone(), move |s: &mut State, rect, _| {
+            if let Some([x, y, _, h]) = rect {
+                s.open_row_menu(row, (x, y + h));
+            }
+        });
+    });
+    button.build(k).key(key)
+}
+
+/// The menu of the row it was asked for on.
+fn row_menu(s: &State, k: &Kit, overlays: &mut Vec<El>) {
+    let Some(open) = &s.row_menu else { return };
+    let idle = s.running.is_none();
+    let mut menu = Menu::new("row-menu").at(open.at.0, open.at.1).min_width(ROW_MENU_WIDTH).open(true).on_close(State::close_row_menu);
+    for action in s.row_actions(&open.row) {
+        if action.destroys() {
+            menu = menu.separator();
+        }
+        let item = MenuItem::new(action.label()).danger(action.destroys()).disabled(action.runs_git() && !idle);
+        // What a double-click on the row does.
+        let item = if matches!(action, RowAction::CheckOut | RowAction::Apply) { item.shortcut("Double-click") } else { item };
+        let row = open.row.clone();
+        menu = menu.item(item.on_select_tx(move |s: &mut State, tx: &mut Tx| s.act_on_row(&row, &action, tx)));
+    }
+    menu.build(k, overlays);
 }
 
 /// A button on the file list's row for `path`, a file or a folder, doing `act` to it.

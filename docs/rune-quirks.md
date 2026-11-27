@@ -56,7 +56,9 @@ Check with a long string without spaces, in a narrow window.
 - `List` cuts long labels at the end, so give it the file name rather than a path.
 - `ListItem` has no slot for a shortcut, unlike `MenuItem`, so a key can only go in the label.
 - `List`'s highlighted row is a faint fill, hard to see. A list that's driven by the keyboard needs its own rows.
-- `Tree` builds its rows with press and double-press only, so a right-click menu can't tell which row it was over.
+- `TreeItem`'s label takes all the room its row leaves, so nothing can sit right after it. A row that needs that leaves the label empty and draws its own, behind a spacer that grows far more. The row then has no accessible name of its own.
+- A `Tree` is one hover group, not each row, so nothing in a row can show only while that row is hovered.
+- A key holding `/` reads as a key path to `Tx::read_layout` and scripts, so it matches nothing. Keys made from branch names or paths need it replaced.
 
 ## Headless scripts
 

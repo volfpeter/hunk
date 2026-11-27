@@ -106,7 +106,7 @@ The row at the top of the comments page counts open, outdated and resolved comme
 
 In **Changes** and **Staging**, the panel above the diff lists what is **Staged** on the left and what is **Unstaged** on the right. A partly staged file is in both. In **Changes**, a file in either list jumps to it in the diff. **Staging** leaves staged files out of the diff, so the staged list there is for seeing what a commit would take.
 
-Each row has **Stage** or **Unstage**. On a folder, it acts on every file under it.
+Each row has **Stage** or **Unstage**. On a folder, it acts on every file under it. Its **⋯** button, or a right-click, opens a menu with the rest: **Open file** in the [file overlay](#files), **Copy path**, and **Discard**, which asks first.
 
 Each file in the diff has its buttons in its header:
 
@@ -123,9 +123,12 @@ To commit, press **Commit** at the right of the bar, the dot on a line, which sh
 
 ## Branches and stashes
 
-- **Branches:** the branch you're on is picked when you open it. Select another and press **Check out** to switch to it, or run **Git: Delete branch** from the [command palette](#commands), which says whether commits are lost before it deletes. To switch or start a branch, see [Switch branches](#switch-branches). Whichever way you switch, even from a terminal, the view moves to the branch you're now on.
+Selecting a branch, commit or stash shows it. To act on one, open its menu with the **⋯** at the end of its row, a right-click, or the **Menu** key or **Shift+F10** on the highlighted row. Its menu doesn't change what the diff shows. Each row says how long ago it last changed, right after its name.
+
+- **Branches:** the branch you're on is picked when you open it. Double-click another, or press **Enter** on it, to check it out. Its menu also has **Update from** the remote branch it tracks, which brings in what was fetched there without checking it out, but only when your branch has nothing of its own the remote lacks. **Merge or rebase** opens [its dialog](#merge-and-rebase) on that branch. **Delete** says whether commits are lost before it deletes. The branch you're on has **Pull** and **Push** instead. To switch or start a branch, see [Switch branches](#switch-branches). Whichever way you switch, even from a terminal, the view moves to the branch you're now on.
+- **Commits:** the menu copies the hash. The last commit's menu also has **Undo commit**, as in the [command palette](#commands).
 - **Ctrl+Shift+S**, or **Git: Stash** in the [command palette](#commands), puts changes aside. Give the stash a name if you like, and pick what it takes: your changes and new files, your changes alone, or only what's staged.
-- **Stashes:** select one and press **Apply** to bring it back and keep it, **Pop** to bring it back and remove it, or **Drop** to delete it, which asks first. Double-clicking a stash applies it.
+- **Stashes:** double-click one, or press **Enter** on it, to bring it back and keep it. Its menu also has **Pop**, which brings it back and removes it, and **Drop**, which deletes it after asking.
 
 ## Merge and rebase
 
@@ -135,7 +138,7 @@ A conflict stops either, and the bar says **Merging** or **Rebasing** with the n
 
 ## Pull requests
 
-In **Branches**, a branch on GitHub shows its pull request beside **Check out**: its number, title and whether it is open, a draft, merged or closed. Click it to open it in the browser. The app asks GitHub through `gh`, so install it and log in with `gh auth login`. Without one, or if `gh` can't look, **Create pull request** opens GitHub's form for a new one, comparing the branch with its parent, as the diff does; hover it to see why `gh` couldn't look. On Forgejo or Gitea, **Create pull request** always shows, as the app can't look there yet.
+In **Branches**, a branch on GitHub shows its pull request above the list: its number, title and whether it is open, a draft, merged or closed. Click it to open it in the browser. The app asks GitHub through `gh`, so install it and log in with `gh auth login`. Without one, or if `gh` can't look, **Create pull request** opens GitHub's form for a new one, comparing the branch with its parent, as the diff does; hover it to see why `gh` couldn't look. On Forgejo or Gitea, **Create pull request** always shows, as the app can't look there yet.
 
 The branch you're on shows its pull request in the bar too, left of **Commit**: its number, with the title and status in the tooltip. Its icon says where it stands: open, draft (a dashed line), merged (two lines joined) or closed (crossed out). Only an open one is bright. Click it to open it.
 

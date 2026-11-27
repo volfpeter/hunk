@@ -396,6 +396,31 @@ Tasks:
 - [x] Go back and forward through the places visited
 - [x] A file tree beside the file, shown or hidden with Ctrl+E, which also opens the overlay on it
 
+### DONE - Step 7: Row menus
+
+Acting on a branch or stash meant selecting it, which also showed it, then pressing a button above the list. Rune's `Tree::on_menu` now says which row a right-click was on, which step 4j's decision against a right-click menu was waiting for.
+
+Decided with Peter:
+
+- **Every list row has a menu**, from a `⋯` at its end, a right-click, or the Menu key and Shift+F10. It acts on its row without selecting it, so the diff doesn't move; the palette still acts on the selection. Branches, stashes, commits and files alike, so a right-click works wherever one is tried.
+- **Double-click (and Enter) does the common thing**: checks out a branch, applies a stash (not pop). The menu repeats it, marked Double-click, as nothing else would tell.
+- **No text buttons on the rows** of branches and stashes: there's no good icon for check out or apply, and words would crowd the row. The age moved from the row's end to right after the name, muted and short (`18h ago`), so the `⋯` is all that's at the end. The branch dialogs show the short age too.
+- **The `⋯` always shows**: a `Tree` can't show something on one row's hover (`docs/rune-quirks.md`).
+- **Update a branch** means fetching what it tracks into it without checking it out, fast-forward only (`git fetch <remote> <branch>:<branch>`), offered for branches that track a remote one. The current branch gets Pull and Push instead.
+- **Merge or rebase** from a branch's menu opens the step 4j dialog filtered to it, so its confirm and its force-push warning stay in one place.
+- **Destructive items confirm** as before, and sit last, after a separator.
+- **The pull request stays above the branch list**, beside "On main", for the branch under review. Its state is known only for that branch: other rows would take a `gh` call each, and creating one needs the parent branch, found on a worker. The header's Check out and the stash header's Apply, Pop and Drop are gone.
+
+Built: `src/menu.rs` holds what each row offers and does, as data, so it is tested without the view. The menu is one `Menu` at the window level, opened at the right-click's point or under the `⋯`, read with `Tx::read_layout`. Commits offer Copy hash, and Undo commit on the last one; files offer Stage or Unstage, Open file (the overlay, only for a file the working tree has), Copy path and Discard where the diff's header offers it.
+
+Tasks:
+
+- [x] A menu on every list row, from `⋯`, a right-click or the keyboard
+- [x] Double-click or Enter checks out a branch and applies a stash
+- [x] Update a branch from what it tracks, without checking it out
+- [x] Short ages right after the name in the lists and branch dialogs
+- [x] Drop the list headers' action buttons
+
 ### Later
 
 Order open, plan each when it comes up: reviewing pull requests on GitHub and Forgejo/Gitea, worktrees (below), the file overlay's follow-ups (below), commit graph, hunk and line staging.
