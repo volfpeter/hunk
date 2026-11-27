@@ -190,6 +190,7 @@ pub const FIND: &str = "Ctrl+F";
 const VIEWS: [&str; 5] = ["Ctrl+1", "Ctrl+2", "Ctrl+3", "Ctrl+4", "Ctrl+5"];
 pub const COMMENTS: &str = "Ctrl+0";
 const LAYOUT: &str = "Ctrl+\\";
+pub const DELETE: &str = "Delete";
 
 /// The shortcut of the command `event` runs, of those that run only with no dialog open.
 fn command_shortcut(event: &KeyEvent) -> Option<&'static str> {
@@ -198,6 +199,7 @@ fn command_shortcut(event: &KeyEvent) -> Option<&'static str> {
         Key::Enter if event.mods.cmd => Some(COMMIT),
         Key::Down if ctrl_shift => Some(PULL),
         Key::Up if ctrl_shift => Some(PUSH),
+        Key::Delete if event.mods == rune::Mods::default() => Some(DELETE),
         Key::Command(digit @ '1'..='5') => VIEWS.get(*digit as usize - '1' as usize).copied(),
         _ if ctrl_shift && event.is_command('c') => Some(COPY),
         _ if ctrl_shift && event.is_command('s') => Some(STASH),
@@ -1803,12 +1805,18 @@ impl State {
         if let Some(stash) = self.selected_stash() {
             offer(idle, Command::new("Git", format!("Apply stash {stash}"), |s, _| s.apply_selected_stash()));
             offer(idle, Command::new("Git", format!("Pop stash {stash}"), |s, _| s.pop_selected_stash()));
-            offer(idle, Command::new("Git", format!("Drop stash {stash}"), |s, _| s.ask_to_drop_stash()));
         }
         if let Some(branch) = self.branch_to_check_out() {
             offer(idle, Command::new("Git", format!("Check out {branch}"), |s, _| s.check_out_selected()));
-            offer(idle, Command::new("Git", format!("Delete branch {branch}"), |s, _| s.ask_to_delete_branch()));
         }
+        let delete = match (self.selected_stash(), self.branch_to_check_out()) {
+            (Some(stash), _) => Some(Command::new("Git", format!("Drop stash {stash}"), |s, _| s.ask_to_drop_stash())),
+            (_, Some(branch)) => Some(Command::new("Git", format!("Delete branch {branch}"), |s, _| s.ask_to_delete_branch())),
+            _ => None,
+        };
+        let deletable = delete.is_some();
+        let delete = delete.unwrap_or_else(|| Command::new("Git", "Delete branch or drop stash", |_, _| {}));
+        offer(idle && deletable, delete.shortcut(DELETE));
         let merge = if self.overview.operation.is_some() { "Merge or rebase in progress" } else { "Merge or rebase" };
         offer(self.overview.last_commit.is_some(), Command::new("Git", merge, |s, _| s.open_merger()).shortcut(MERGE));
         let shown = self.branch_on_forge().zip(self.pull_request_offer()).map(|(((_, branch), _), offer)| match offer {
@@ -2087,10 +2095,12 @@ impl State {
         }
     }
 
-    /// Fills the list for the current kind, keeping the selection while it still exists and
-    /// otherwise selecting the current branch among branches, else the first entry.
+    /// Fills the list for the current kind, keeping the selection while it still exists, else
+    /// selecting the entry now in its row, else the current branch among branches, else the
+    /// first entry.
     fn rebuild_list(&mut self) {
         let kept = self.list.selected().next().map(str::to_owned);
+        let kept_row = kept.as_deref().and_then(|id| (0..self.list.visible_len()).position(|row| self.list.visible_id(row) == Some(id)));
         let entries = match self.kind {
             Kind::Changes | Kind::Staging => &[][..],
             Kind::Commits => &self.overview.commits,
@@ -2102,7 +2112,8 @@ impl State {
             self.list.insert(None, entry.id.clone(), entry.clone());
         }
         let current = entries.iter().find(|entry| self.kind == Kind::Branches && entry.id == self.overview.head);
-        let selected = kept.filter(|id| self.list.contains(id)).or_else(|| current.or(entries.first()).map(|entry| entry.id.clone()));
+        let in_its_row = kept_row.and_then(|row| entries.get(row.min(entries.len().saturating_sub(1))));
+        let selected = kept.filter(|id| self.list.contains(id)).or_else(|| in_its_row.or(current).or(entries.first()).map(|entry| entry.id.clone()));
         if let Some(id) = selected {
             self.list.select(&id);
         }
@@ -2717,6 +2728,27 @@ pub(crate) mod tests {
 
         state.show_overview(Ok(on("abc1234")));
         assert_eq!(state.list.selected().next(), Some("other"), "a detached head is no branch to show");
+    }
+
+    #[test]
+    fn delete_asks_about_the_selected_branch_and_then_selects_the_one_below() {
+        let (_fixture, mut state) = state();
+        let entries = |names: &[&str]| names.iter().map(|name| Entry { id: (*name).to_owned(), title: (*name).to_owned(), detail: String::new() }).collect();
+        let on = |names: &[&str]| Overview { head: "main".to_owned(), branches: entries(names), ..Overview::default() };
+        let delete = KeyEvent { key: Key::Delete, mods: rune::Mods::default() };
+        state.show_overview(Ok(on(&["main", "one", "two"])));
+        state.select_kind(Kind::Branches);
+        state.on_key(&delete, &mut Tx::default());
+        assert_eq!(state.confirming, None, "not the current branch");
+
+        state.list.select("one");
+        state.on_key(&delete, &mut Tx::default());
+        assert_eq!(state.confirming.take(), Some(Action::DeleteBranch("one".into())));
+
+        state.show_overview(Ok(on(&["main", "two"])));
+        assert_eq!(state.list.selected().next(), Some("two"));
+        state.show_overview(Ok(on(&["main"])));
+        assert_eq!(state.list.selected().next(), Some("main"), "the last row, once the one below is gone");
     }
 
     #[test]

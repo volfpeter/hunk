@@ -147,6 +147,7 @@ Everything the app does, to try at your own pace. A tick means Peter tried it an
 - [ ] Every row of a list has a ⋯ menu, also opened by a right-click or the Menu key, acting on that row without showing it
 - [ ] A branch's menu: check out, update from the branch it tracks without checking it out (fast-forward only), merge or rebase, copy the name, delete; the current branch's: pull, push, copy the name
 - [ ] A stash's menu: apply, pop, drop
+- [ ] Delete asks to delete the selected branch or drop the selected stash, then selects the row below, so the next press goes on; their menus show the key
 - [ ] A commit's menu copies its hash; the last commit's also undoes it
 - [ ] A file's menu: stage or unstage, open it in the file overlay, copy its path, discard
 - [ ] Branches, commits and stashes say how long ago they changed, shortly (18h ago), right after their name; the branch dialogs say it the same way

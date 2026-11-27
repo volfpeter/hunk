@@ -7,7 +7,7 @@ use rune_kit::{Badge, Button, ButtonVariant, ControlSize, Dialog, FileNode, Icon
 
 use crate::action::{Action, Integration, Stashed};
 use crate::browse::{BROWSED, BROWSED_SCROLL};
-use crate::app::{APPLICATION, BROWSE_FILES, COMMENTS, COMMIT, COPY, Command, DRAFT_NOTE, FILE_PICKER, FIND, KEYS, Kind, MERGE, PALETTE, PULL, PULL_REQUEST, PUSH, PullRequestOffer, State, Target, copy_label};
+use crate::app::{APPLICATION, BROWSE_FILES, COMMENTS, COMMIT, COPY, Command, DELETE, DRAFT_NOTE, FILE_PICKER, FIND, KEYS, Kind, MERGE, PALETTE, PULL, PULL_REQUEST, PUSH, PullRequestOffer, State, Target, copy_label};
 use crate::comments::{Comment, Group};
 use crate::find::{self, Step};
 use crate::gh::{PullRequest, Status};
@@ -594,8 +594,11 @@ fn row_menu(s: &State, k: &Kit, overlays: &mut Vec<El>) {
             menu = menu.separator();
         }
         let item = MenuItem::new(action.label()).danger(action.destroys()).disabled(action.runs_git() && !idle);
-        // What a double-click on the row does.
-        let item = if matches!(action, RowAction::CheckOut | RowAction::Apply) { item.shortcut("Double-click") } else { item };
+        let item = match action {
+            RowAction::CheckOut | RowAction::Apply => item.shortcut("Double-click"),
+            RowAction::DeleteBranch | RowAction::Drop => item.shortcut(DELETE),
+            _ => item,
+        };
         let row = open.row.clone();
         menu = menu.item(item.on_select_tx(move |s: &mut State, tx: &mut Tx| s.act_on_row(&row, &action, tx)));
     }
