@@ -193,6 +193,17 @@ Everything the app does, to try at your own pace. A tick means Peter tried it an
 - [ ] Coming back to the window looks for pull requests again, so one created or merged in the browser shows
 - [ ] Refresh from the palette, or a fetch, looks for pull requests again
 
+## Review a pull request
+
+- [ ] The pull request icon on the comments page, beside the open count, or Git: Review pull request #N in the palette, opens a review of the current branch's open or draft pull request on GitHub
+- [ ] It lists the open comments, from any view, those not outdated ticked; click a row to tick or untick it
+- [ ] Each row says whether its comment goes on its lines on GitHub or into the summary: on its lines when the pull request's diff shows its code
+- [ ] Request changes, Comment and Approve each send the ticked comments and the summary as one review, in one click
+- [ ] Comments GitHub can't place, like whole-file ones or ones on code it doesn't have, land in the review's text with their location and quoted code
+- [ ] Sent comments are resolved; the dialog closes and a toast says what was sent
+- [ ] When GitHub refuses, the dialog stays open and says why, like approving your own pull request
+- [ ] Comment and Request changes wait for a ticked comment or a summary; Approve doesn't
+
 ## Commands
 
 - [ ] Ctrl+K opens the palette, with what's possible right now

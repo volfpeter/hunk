@@ -18,11 +18,12 @@ use crate::comments::{Anchor, Comment, Comments, Group, prompt};
 use crate::find::{self, Step};
 use crate::forge::Hosted;
 use crate::fuzzy;
-use crate::gh::{self, PullRequest};
+use crate::gh::{self, PullRequest, Status, Verdict};
 use crate::menu::RowMenu;
 use crate::git::{Repo, Result};
 use crate::open::{Choice, Offer, Opened, resolve};
 use crate::overview::{Change, Entry, FileStatus, LastCommit, LineCounts, Operation, Overview};
+use crate::pull_review;
 use crate::review::{Loaded, Review, files, parent_branch};
 use crate::snippet::Snippet;
 use crate::switcher::{BranchChoice, BranchOffer};
@@ -134,6 +135,24 @@ pub enum PullRequestOffer {
     /// The forge's form for a new one, and why looking for one failed, if it did.
     New { url: String, failure: Option<String> },
 }
+
+/// A review of the current branch's pull request, while its dialog is open.
+pub struct PullReview {
+    pub pull_request: PullRequest,
+    hosted: Hosted,
+    /// The comments to send.
+    pub ticked: Vec<u64>,
+    /// The pull request's diff, once GitHub sent it, or why it didn't.
+    pub diff: Option<std::result::Result<Vec<FileDiff>, String>>,
+    /// What the review being sent says.
+    pub sending: Option<Verdict>,
+    /// Why sending failed.
+    pub failure: Option<String>,
+}
+
+/// A review GitHub was sent: what it said of which pull request, the comments it took and how it
+/// went.
+type Sent = (Verdict, u64, Vec<u64>, std::result::Result<(), String>);
 
 /// What a palette command does.
 type Run = Box<dyn Fn(&mut State, &mut Tx)>;
@@ -315,6 +334,8 @@ pub struct State {
     pub find_text: TextEdit,
     /// Whether the list of keys is open.
     pub showing_keys: bool,
+    pub pull_review: Option<PullReview>,
+    pub review_text: TextEdit,
     pub row_menu: Option<RowMenu>,
     shown: Option<Shown>,
     /// The comment to scroll to once its review is on screen.
@@ -332,6 +353,8 @@ pub struct State {
     creating_pull_request: bool,
     /// The branch the current one grew from, the base of its new pull request.
     head_parent_load: Latest<(ForgeBranch, Result<String>)>,
+    pull_diff_load: Latest<std::result::Result<String, String>>,
+    review_load: Latest<Sent>,
     watch: Option<RepoWatch>,
     pub browser: Browser,
     pub shell: Shell,
@@ -395,6 +418,8 @@ impl State {
             finding: false,
             find_text: TextEdit::default(),
             showing_keys: false,
+            pull_review: None,
+            review_text: TextEdit::default(),
             row_menu: None,
             shown: None,
             reveal: None,
@@ -407,6 +432,8 @@ impl State {
             pull_request_load: Latest::default(),
             creating_pull_request: false,
             head_parent_load: Latest::default(),
+            pull_diff_load: Latest::default(),
+            review_load: Latest::default(),
             watch: None,
             browser: Browser::new(recent_files, file_tree),
             shell,
@@ -451,12 +478,14 @@ impl State {
         let action = self.action_load.take();
         let pull_requests = self.pull_request_load.take();
         let head_parent = self.head_parent_load.take();
+        let pull_diff = self.pull_diff_load.take();
+        let sent = self.review_load.take();
         let (repo_changed, watch_failure) = self.watch.as_ref().map_or((false, None), RepoWatch::take);
         let (browsed, walked) = self.browser.poll(tx);
         if walked {
             self.rank_files();
         }
-        let landed = opened_landed || offer.is_some() || overview.is_some() || patch.is_some() || comments || action.is_some() || pull_requests.is_some() || head_parent.is_some() || watch_failure.is_some() || browsed;
+        let landed = opened_landed || offer.is_some() || overview.is_some() || patch.is_some() || comments || action.is_some() || pull_requests.is_some() || head_parent.is_some() || pull_diff.is_some() || sent.is_some() || watch_failure.is_some() || browsed;
         self.pull_requests.extend(pull_requests.into_iter().flatten());
         if let Some(offer) = offer {
             self.show_offer(offer);
@@ -469,6 +498,12 @@ impl State {
         }
         if let Some((action, result)) = action {
             self.finish_action(&action, result);
+        }
+        if let (Some(diff), Some(review)) = (pull_diff, &mut self.pull_review) {
+            review.diff = Some(diff.map(|patch| rune_kit::diff::parse(&patch)));
+        }
+        if let Some(sent) = sent {
+            self.finish_review(sent);
         }
         if let Some(((hosted, branch), parent)) = head_parent {
             match parent {
@@ -1484,6 +1519,97 @@ impl State {
         });
     }
 
+    /// The current branch's pull request, when it is open for review.
+    pub fn reviewable_pull_request(&self) -> Option<&PullRequest> {
+        self.head_pull_request().filter(|found| matches!(found.status, Status::Open | Status::Draft))
+    }
+
+    /// Opens the review of the current branch's pull request, the open comments whose code is
+    /// there ticked, and asks GitHub for its diff.
+    pub fn open_pull_review(&mut self) {
+        let (Some(found), Some((hosted, _))) = (self.reviewable_pull_request().cloned(), self.head_on_github()) else { return };
+        let ticked = self.comments_to_copy().iter().map(|comment| comment.id).collect();
+        self.pull_diff_load.request((hosted.clone(), found.number), |(hosted, number)| gh::pull_request_diff(&hosted, number));
+        self.pull_review = Some(PullReview { pull_request: found, hosted, ticked, diff: None, sending: None, failure: None });
+    }
+
+    /// Closes the review dialog, keeping its summary. A review being sent still lands.
+    pub fn close_pull_review(&mut self) {
+        self.pull_review = None;
+    }
+
+    pub fn toggle_review_comment(&mut self, id: u64) {
+        let Some(review) = &mut self.pull_review else { return };
+        match review.ticked.iter().position(|ticked| *ticked == id) {
+            Some(index) => _ = review.ticked.remove(index),
+            None => review.ticked.push(id),
+        }
+    }
+
+    /// Whether `comment` goes on its lines in the review, once the pull request's diff says.
+    pub fn goes_on_lines(&self, comment: &Comment) -> Option<bool> {
+        let files = self.pull_review.as_ref()?.diff.as_ref()?.as_ref().ok()?;
+        Some(pull_review::on_lines(comment, files).is_some())
+    }
+
+    /// The open comments ticked in the review.
+    fn review_comments(&self) -> Vec<&Comment> {
+        let Some(review) = &self.pull_review else { return Vec::new() };
+        self.comments.open().into_iter().filter(|comment| review.ticked.contains(&comment.id)).collect()
+    }
+
+    /// Whether the review can be sent saying `verdict`: only an approval goes without anything
+    /// to say.
+    pub fn can_send_review(&self, verdict: Verdict) -> bool {
+        let Some(review) = &self.pull_review else { return false };
+        let says = verdict == Verdict::Approve || !self.review_comments().is_empty() || !self.review_text.text.trim().is_empty();
+        review.sending.is_none() && matches!(review.diff, Some(Ok(_))) && says
+    }
+
+    /// Sends the review to GitHub saying `verdict`, in the background.
+    pub fn send_review(&mut self, verdict: Verdict) {
+        if !self.can_send_review(verdict) {
+            return;
+        }
+        let Some(review) = &self.pull_review else { return };
+        let Some(Ok(files)) = &review.diff else { return };
+        let comments = self.review_comments();
+        let composed = pull_review::compose(&comments, files, &self.review_text.text);
+        let ids: Vec<u64> = comments.iter().map(|comment| comment.id).collect();
+        let (hosted, number) = (review.hosted.clone(), review.pull_request.number);
+        self.review_load.request((hosted, number, verdict, composed, ids), |(hosted, number, verdict, composed, ids)| {
+            let result = gh::submit_review(&hosted, number, verdict, &composed.summary, &composed.on_lines);
+            (verdict, number, ids, result)
+        });
+        if let Some(review) = &mut self.pull_review {
+            review.sending = Some(verdict);
+            review.failure = None;
+        }
+    }
+
+    /// Resolves the comments a review sent and closes its dialog, or says why GitHub refused it.
+    fn finish_review(&mut self, (verdict, number, ids, result): Sent) {
+        if let Err(message) = result {
+            match &mut self.pull_review {
+                Some(review) => {
+                    review.sending = None;
+                    review.failure = Some(message);
+                }
+                None => self.action_failure = Some(ActionFailure { action: "Review pull request", message }),
+            }
+            return;
+        }
+        self.comments.resolve(&ids);
+        self.comments_changed();
+        self.pull_review = None;
+        self.review_text = TextEdit::default();
+        self.outcome.show(match verdict {
+            Verdict::RequestChanges => format!("Requested changes on #{number}"),
+            Verdict::Comment => format!("Sent the review to #{number}"),
+            Verdict::Approve => format!("Approved #{number}"),
+        });
+    }
+
     fn open_in_browser(&mut self, url: &str, tx: &mut Tx) {
         if let Err(error) = tx.open_url(url) {
             self.action_failure = Some(ActionFailure { action: "Open pull request", message: format!("{url}: {error}") });
@@ -1834,6 +1960,9 @@ impl State {
         let head_available = head.is_some() && (idle || self.head_pull_request().is_some());
         let head = head.unwrap_or_else(|| "Open or create pull request".to_owned());
         offer(head_available, Command::new("Git", head, State::open_head_pull_request).shortcut(PULL_REQUEST));
+        if let Some(found) = self.reviewable_pull_request() {
+            offer(true, Command::new("Git", format!("Review pull request #{}", found.number), |s, _| s.open_pull_review()));
+        }
         offer(true, Command::new("Git", "Switch branch", |s, _| s.open_switcher()).shortcut("Ctrl+B").alias("Ctrl+Shift+B"));
         offer(self.can_fetch(), Command::new("Git", "Fetch", |s, _| s.run(Action::Fetch)).shortcut(FETCH));
         offer(idle, Command::new("Git", "Pull", |s, _| s.run(Action::Pull)).shortcut(PULL));
@@ -1892,7 +2021,7 @@ impl State {
 
     fn dialog_open(&self) -> bool {
         let pickers = self.switcher.is_some() || self.merger.is_some() || self.shell.opener.is_some() || self.browser.open || self.browser.picker.is_some();
-        let dialogs = self.deleting.is_some() || self.deleting_group.is_some() || self.confirming.is_some() || self.committing || self.stashing.is_some() || self.managing_remotes || self.action_failure.is_some() || self.showing_keys || self.row_menu.is_some();
+        let dialogs = self.deleting.is_some() || self.deleting_group.is_some() || self.confirming.is_some() || self.committing || self.stashing.is_some() || self.managing_remotes || self.action_failure.is_some() || self.showing_keys || self.row_menu.is_some() || self.pull_review.is_some();
         pickers || dialogs
     }
 
@@ -1911,6 +2040,8 @@ impl State {
         self.action_load.set_waker(waker.clone());
         self.pull_request_load.set_waker(waker.clone());
         self.head_parent_load.set_waker(waker.clone());
+        self.pull_diff_load.set_waker(waker.clone());
+        self.review_load.set_waker(waker.clone());
         self.comments.set_waker(waker.clone());
         self.browser.set_waker(waker.clone());
         self.watch = Some(RepoWatch::start(repo, waker));

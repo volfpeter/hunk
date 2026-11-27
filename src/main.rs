@@ -13,6 +13,7 @@ mod kept;
 mod menu;
 mod open;
 mod overview;
+mod pull_review;
 mod recent;
 mod review;
 mod settings;

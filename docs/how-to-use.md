@@ -150,6 +150,14 @@ The branch you're on shows its pull request in the bar too, left of **Commit**: 
 
 The pull request goes to the repository named in the bar: the one `origin` points at. The [command palette](#commands) has the same, under **Git**. The app asks GitHub again when you come back to its window, so a pull request you just created or merged in the browser shows then. **Git: Refresh** in the palette and a fetch ask again too.
 
+## Review a pull request
+
+Comments can go to the current branch's pull request on GitHub as one review. On the comments page, press the pull request icon beside the open count, or pick **Git: Review pull request** in the [command palette](#commands). It shows while the branch's pull request is open or a draft.
+
+The dialog lists the open comments, wherever you wrote them. Those whose code is still there start ticked; click a row to change that. Each row says where its comment goes. GitHub only takes a comment on lines its pull request's diff shows, so a comment whose code GitHub has goes **on its lines**, and the rest go **in the summary**, with their location and the code they quote: comments on a whole file, on lines you unfolded, or on changes you haven't pushed.
+
+Write a summary if you want one, then press **Request changes**, **Comment** or **Approve**: that sends the review. The comments sent are resolved. If GitHub refuses, the dialog says why and keeps everything; it won't let you approve or request changes on your own pull request, for one.
+
 ## Switch branches
 
 **Ctrl+B**, or clicking the branch name next to the repository's, opens the branch switcher. It lists your branches, the most recently changed first, then those that are only on a remote, like a colleague's or an agent's. Type to filter, use the arrow keys to pick and **Enter** to switch. A branch that is only on a remote becomes a local branch tracking it.

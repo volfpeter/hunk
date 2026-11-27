@@ -182,6 +182,21 @@ impl Comment {
         }
     }
 
+    /// What its location leaves unsaid: `(file)`, `(removed)`, `(outdated)`.
+    pub fn labels(&self) -> Vec<&'static str> {
+        let mut labels = Vec::new();
+        if self.anchor.lines.is_none() {
+            labels.push("(file)");
+        }
+        if self.anchor.side == Side::Old {
+            labels.push("(removed)");
+        }
+        if self.outdated {
+            labels.push("(outdated)");
+        }
+        labels
+    }
+
     /// What it was written on: its snippet, else its quoted lines.
     pub fn snippet(&self) -> Option<Snippet> {
         self.snippet.clone().or_else(|| Snippet::quoted(&self.anchor))
@@ -241,16 +256,7 @@ pub fn prompt(comments: &[&Comment]) -> String {
 
 fn prompt_block(comment: &Comment) -> String {
     let anchor = &comment.anchor;
-    let mut labels = Vec::new();
-    if anchor.lines.is_none() {
-        labels.push("(file)");
-    }
-    if anchor.side == Side::Old {
-        labels.push("(removed)");
-    }
-    if comment.outdated {
-        labels.push("(outdated)");
-    }
+    let mut labels = comment.labels();
     let location = anchor.location();
     labels.push(&location);
     let quote = anchor.lines.iter().flat_map(|lines| &lines.quoted).map(|line| format!("> {line}").trim_end().to_owned()).collect::<Vec<_>>();
@@ -391,6 +397,13 @@ impl Comments {
 
     pub fn delete(&mut self, id: u64) {
         self.all.retain(|comment| comment.id != id);
+        self.save();
+    }
+
+    pub fn resolve(&mut self, ids: &[u64]) {
+        for comment in self.all.iter_mut().filter(|comment| ids.contains(&comment.id)) {
+            comment.resolved = true;
+        }
         self.save();
     }
 

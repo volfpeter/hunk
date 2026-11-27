@@ -1,6 +1,6 @@
 # 0001: Approach
 
-Status: step 6 done, waiting for Peter's UI review. Steps 4h and 4j wait for Peter's UI review, step 4i for him to try the install on Linux and a macOS user's turn, and step 4g's `s` / `u` is still open. See [Tasks](#tasks).
+Status: step 9 done, waiting for Peter's UI review, as is step 6. Steps 4h and 4j wait for Peter's UI review, step 4i for him to try the install on Linux and a macOS user's turn, and step 4g's `s` / `u` is still open. See [Tasks](#tasks).
 
 ## Intent
 
@@ -20,7 +20,7 @@ A **Review** is a comparison between two points. There are five:
 | Branch             | merge-base with its parent vs branch tip         |
 | Stash              | its parent vs the stash                          |
 
-A pull request will be a sixth: same comparison as a branch, with comments going to the forge.
+A pull request is not a review of its own: comments written in any review go to it (step 9).
 
 ## UI direction
 
@@ -49,7 +49,7 @@ The best answers so far, not rules: revisit one when the project outgrows it or 
 - **`dirs` for app folders.** Small, and knows each platform's places.
 - **Patches carry each file whole, and Rune folds them.** So every fold opens without reading files, and git still makes the diff. Parsing whole files costs the UI thread, felt only on huge ones.
 - **A branch is compared with its parent**, the other local branch it has the fewest commits beyond, or the default branch, which also wins ties. The default branch is the local one named after `origin`'s, so `origin/` shows only when there is no such local branch: it read like a branch prefix. A local default branch that is behind `origin` can pull its missing commits into the diff, which pulling fixes. Every diff's title sets its two points apart with an icon of two opposite arrows, older first, as an arrow from a base to its branch read like a hierarchy. Git doesn't record which branch another grew from, and guessing beats bookkeeping that misses branches made outside the app. Comparing with the default branch mixed a stacked branch's parent into it. The diff's title names the base, so a wrong guess shows.
-- **Comments go to agents first.** Each stores path, side, line range and commit, enough to submit to a forge later. No destination abstraction until then.
+- **Comments go to agents, and to GitHub pull requests** (step 9). Each stores path, side, line range and quoted code, which is enough to find it in a pull request's diff. No destination abstraction: there are two, and they share nothing but the comments.
 
 ## Tasks
 
@@ -439,6 +439,24 @@ Tasks:
 
 - [x] Find in the review's diff, the comments page and the overlay's file, with Ctrl+F or the magnifier
 - [ ] Rune issue: highlight ranges within a diff's lines, for the matches
+
+### Step 9: Send comments to a pull request
+
+Send open comments to the current branch's pull request on GitHub as one review, with a verdict. No pull request review of its own: comments are written in any review, as before.
+
+Decided with Peter:
+
+- **A review dialog, no new view.** It lists the open comments to tick, those not outdated ticked, has a summary field, and ends in three buttons, right-aligned: Request changes (danger), Comment, Approve. One click sends. With three equal actions, Ctrl+Enter sends nothing. Opened from the comments page and the palette.
+- **Each comment goes where GitHub takes it.** GitHub takes a review comment only on a line of the pull request's diff, and refuses the whole review over one that isn't. So the app fetches that diff (`gh pr diff`) and looks for each comment's quoted text in its hunks, as comments are found in any review. Found, it goes on its lines; not found (whole-file comments, unfolded lines, code GitHub doesn't have), it goes into the summary as its location, quoted code and comment. Each row says which. A horizontal rule separates what the reviewer typed and each comment in the summary, as a comment can hold any Markdown, headings included; none at either end.
+- **Sent comments are resolved**, so they stay on the comments page and aren't offered again. No "sent" state.
+- **Only send, only GitHub.** Not shown: comments already on GitHub, replies, resolving threads there. Conversation comments outside a review, Forgejo and Gitea wait until they hurt.
+- **GitHub's refusals show as they are**: Approve or Request changes on your own pull request, a summary GitHub wants. The pull request's head moving between fetching its diff and sending leaves the comments outdated there, which is harmless.
+
+Built: `gh pr diff` gives the pull request's diff, parsed with Rune's patch parser on the UI thread when it lands, and `Anchor::position` finds each comment in its hunks, the parse holding no whole texts. The review goes out through `gh api` with the JSON on stdin, one request, so GitHub takes all of it or none. A refusal's reasons are in the body `gh api` prints to stdout; its stderr only gives the HTTP status. Tried on a real pull request: ranges, single lines, a review of only inline comments with no summary, and approving your own (refused). A review with nothing at all is refused with no reason, so Comment and Request changes wait for a ticked comment or a summary. The dialog opens only for the current branch's open or draft pull request, as only the current branch's is known everywhere.
+
+Tasks:
+
+- [x] Send ticked comments, and a summary, as one review of the current branch's pull request, with a verdict
 
 ### Later
 

@@ -3,14 +3,14 @@
 use rune::{Color, Cx, El, Icon, ScrollSpec, TextEdit, TextStyle, Tx, col, el, icon, row, text};
 use rune::{Key, KeyEvent, Mods};
 use rune_kit::diff::{Annotation, DiffMode, DiffView, FoldRow};
-use rune_kit::{Badge, Button, ButtonVariant, ControlSize, Dialog, FileNode, IconButton, IconButtonVariant, Kit, Menu, MenuItem, RadioGroup, RadioItem, SegmentedControl, Spinner, TextArea, TextInput, Toast, ToastRegion, Tree, TreeItem, TreeModel, TreeStyle, root};
+use rune_kit::{Badge, Button, ButtonVariant, Checkbox, ControlSize, Dialog, FileNode, IconButton, IconButtonVariant, Kit, Menu, MenuItem, RadioGroup, RadioItem, SegmentedControl, Spinner, TextArea, TextInput, Toast, ToastRegion, Tree, TreeItem, TreeModel, TreeStyle, root};
 
 use crate::action::{Action, Integration, Stashed};
 use crate::browse::{BROWSED, BROWSED_SCROLL};
 use crate::app::{APPLICATION, BROWSE_FILES, COMMENTS, COMMIT, COPY, Command, DELETE, DRAFT_NOTE, FILE_PICKER, FIND, KEYS, Kind, MERGE, PALETTE, PULL, PULL_REQUEST, PUSH, PullRequestOffer, State, Target, copy_label};
 use crate::comments::{Comment, Group};
 use crate::find::{self, Step};
-use crate::gh::{PullRequest, Status};
+use crate::gh::{PullRequest, Status, Verdict};
 use crate::menu::{Row, RowAction};
 use crate::open::{Choice, tilde};
 use crate::overview::{CommitPlan, Entry, LineCounts, Operation};
@@ -230,6 +230,7 @@ pub fn view(s: &State, cx: &mut Cx<State>) -> El {
     delete_group_dialog(s, &k, &mut overlays);
     action_dialog(s, &k, &mut overlays);
     commit_dialog(s, &k, &mut overlays);
+    review_dialog(s, &k, &mut overlays);
     stash_dialog(s, &k, &mut overlays);
     failure_dialog(s, &k, &mut overlays);
     row_menu(s, &k, &mut overlays);
@@ -700,6 +701,10 @@ fn comment_groups(s: &State, k: &Kit) -> El {
     let copy = action_icon(glyph, help, to_copy == 0).shortcut(COPY).on_press_tx(State::copy_open_comments).build(k).key("copy-open");
     let resolve = action_icon(&RESOLVE_ICON, "Resolve all comments, outdated ones too".to_owned(), open + outdated == 0);
     let resolve = resolve.on_press(State::resolve_all_comments).build(k).key("resolve-all");
+    let review = s.reviewable_pull_request().map(|found| {
+        let help = format!("Review pull request #{}, sending the comments you pick", found.number);
+        action_icon(&PULL_REQUEST_ICON, help, false).on_press(State::open_pull_review).build(k).key("review-pull-request")
+    });
     let delete = |group: Group, count: usize, key: &str| {
         let help = format!("Delete {}", group.name(count));
         action_icon(&DELETE_ICON, help, count == 0).on_press(move |s: &mut State| s.ask_to_delete_group(group)).build(k).key(key)
@@ -708,7 +713,7 @@ fn comment_groups(s: &State, k: &Kit) -> El {
     let groups = status_line()
         .key("comment-groups")
         .gap(24.0)
-        .child(group(format!("{open} open"), vec![copy, resolve]))
+        .child(group(format!("{open} open"), [copy, resolve].into_iter().chain(review).collect()))
         .child(group(format!("{outdated} outdated"), vec![delete(Group::Outdated, outdated, "delete-outdated")]))
         .child(group(format!("{resolved} resolved"), vec![delete(Group::Resolved, resolved, "delete-resolved")]));
     sheet(k, groups)
@@ -1041,6 +1046,89 @@ fn commit_summary(k: &Kit, plan: CommitPlan) -> El {
     summary
         .child(heading("Stays uncommitted").pt(12.0))
         .children([count(plan.partly, "partly committed", k.c.warning.fg), count(plan.left_out, "not included", k.c.text_base)].into_iter().flatten())
+}
+
+/// The review of the current branch's pull request: the comments to send, a summary, and a
+/// button for each verdict.
+fn review_dialog(s: &State, k: &Kit, overlays: &mut Vec<El>) {
+    let Some(review) = &s.pull_review else { return };
+    let open = s.comments.open();
+    let list = open.iter().fold(dialog_list("review-comments"), |list, comment| list.child(review_row(s, k, comment, review.ticked.contains(&comment.id))));
+    let list = if open.is_empty() { list.child(muted(k, "No open comments").py(8.0)) } else { list };
+    let field = TextArea::new(&s.review_text)
+        .width(None)
+        .rows(COMMIT_ROWS)
+        .placeholder("Summary")
+        .label("Summary")
+        .on_edit(|s: &mut State| &mut s.review_text)
+        // Three verdicts leave Ctrl+Enter nothing to send.
+        .on_key(|s: &mut State, event: &KeyEvent, _: &mut Tx| multi_line_key(s, event, |s| &mut s.review_text, |_| {}));
+    let problem = match (&review.diff, &review.failure) {
+        (_, Some(failure)) => Some(format!("GitHub refused the review: {failure}")),
+        (Some(Err(error)), _) => Some(format!("Couldn't get the pull request's diff: {error}")),
+        _ => None,
+    };
+    let verdict = |verdict: Verdict, variant: ButtonVariant| {
+        let variant = if review.sending == Some(verdict) { ButtonVariant::Loading } else { variant };
+        Button::new(verdict.label()).variant(variant).disabled(!s.can_send_review(verdict)).on_press(move |s: &mut State| s.send_review(verdict)).build(k)
+    };
+    let buttons = row()
+        .w_full()
+        .gap(8.0)
+        .justify_end()
+        .child(verdict(Verdict::RequestChanges, ButtonVariant::Danger))
+        .child(verdict(Verdict::Comment, ButtonVariant::Neutral))
+        .child(verdict(Verdict::Approve, ButtonVariant::Outline));
+    let title = text(review.pull_request.title.clone()).font(k.ty.ui).color(k.c.text_muted).wrap_anywhere();
+    let content = col()
+        .w_full()
+        .px(16.0)
+        .pb(16.0)
+        .gap(12.0)
+        .child(title)
+        .child(list)
+        .child(field.build(k))
+        .children(problem.map(|problem| text(problem).font(k.ty.ui).color(k.c.danger.fg).wrap_anywhere()))
+        .child(buttons);
+    Dialog::new("review-pull-request", format!("Review #{}", review.pull_request.number))
+        .width(COMMIT_WIDTH)
+        .fit()
+        .open(true)
+        .on_close(State::close_pull_review)
+        .child(content)
+        .build(k, overlays);
+}
+
+/// A comment of the review dialog: whether it is sent, where it points, how it starts, and
+/// where it goes in the review.
+fn review_row(s: &State, k: &Kit, comment: &Comment, ticked: bool) -> El {
+    let id = comment.id;
+    let location = comment.anchor.location();
+    let body = comment.body.lines().next().unwrap_or_default().to_owned();
+    let place = match s.goes_on_lines(comment) {
+        Some(true) => "on its lines",
+        Some(false) => "in the summary",
+        None => "",
+    };
+    let status = comment.status().map(|status| Badge::new(status).build(k));
+    row()
+        .key(format!("review-comment{id}"))
+        .role("checkbox")
+        .label(location.clone())
+        .checked(ticked)
+        .w_full()
+        .h(PICKER_ROW_HEIGHT)
+        .px(8.0)
+        .gap(8.0)
+        .items_center()
+        .radius(k.radius.md)
+        .hover(k.c.hover)
+        .child(Checkbox::new(ticked).build(k).a11y_hidden())
+        .child(one_line(location).truncate_head().max_w(PLACE_MAX_WIDTH).font(k.ty.ui_medium).color(k.c.text_base))
+        .children(status)
+        .child(one_line(body).grow(1.0).font(k.ty.ui).color(k.c.text_muted))
+        .child(text(place).font(k.ty.text_small).color(k.c.text_faint))
+        .on_press(move |s: &mut State| s.toggle_review_comment(id))
 }
 
 /// What a stash takes and what it is called.
