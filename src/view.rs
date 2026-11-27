@@ -263,7 +263,7 @@ fn bar(s: &State, k: &Kit) -> El {
     let commit_help = match staged {
         _ if s.overview.operation.is_some() => "Continue or abort the merge or rebase first".to_owned(),
         _ if !s.overview.conflicted().is_empty() => "Settle the conflicts first".to_owned(),
-        _ if !s.can_start_commit() => "Nothing to commit".to_owned(),
+        _ if s.overview.files.is_empty() => "Empty commit".to_owned(),
         0 => "Commit everything".to_owned(),
         n => format!("Commit {}", plural(n, "staged file")),
     };
@@ -952,6 +952,7 @@ fn commit_dialog(s: &State, k: &Kit, overlays: &mut Vec<El>) {
         .on_key(|s: &mut State, event: &KeyEvent, _: &mut Tx| multi_line_key(s, event, |s| &mut s.commit_text, State::commit));
     let plan = s.overview.commit_plan();
     let label = match (plan.files(), plan.takes_all) {
+        (0, _) => "Commit no files".to_owned(),
         (1, _) => "Commit 1 file".to_owned(),
         (files, true) => format!("Commit all {files} files"),
         (files, false) => format!("Commit {files} files"),
@@ -981,6 +982,7 @@ fn commit_summary(k: &Kit, plan: CommitPlan) -> El {
     let count = |files: usize, what: &str, color| (files > 0).then(|| one_line(format!("{files} {what}")).font(k.ty.ui).color(color).pl(8.0));
     let summary = col().key("commit-summary").w(COMMIT_SUMMARY_WIDTH).gap(4.0).child(heading("This commit"));
     let summary = summary.children([count(plan.new, "new", k.c.text_base), count(plan.changed, "changed", k.c.text_base), count(plan.deleted, "deleted", k.c.text_base)].into_iter().flatten());
+    let summary = if plan.files() == 0 { summary.child(one_line("No changes".to_owned()).font(k.ty.ui).color(k.c.text_base).pl(8.0)) } else { summary };
     if plan.partly + plan.left_out == 0 {
         return summary;
     }
@@ -1550,7 +1552,7 @@ fn file_row(s: &State, k: &Kit, path: &str, active: bool, index: usize) -> El {
 /// Dialog pushes the layer centring its panel last.
 fn pin_to_top(overlays: &mut Vec<El>) {
     if let Some(layer) = overlays.pop() {
-        overlays.push(layer.items_start());
+        overlays.push(layer.justify_start());
     }
 }
 

@@ -118,6 +118,7 @@ Everything the app does, to try at your own pace. A tick means Peter tried it an
 - [ ] A failed or closed commit dialog keeps its message
 - [ ] The commit dialog sums up what the commit takes and what stays uncommitted, marking partly committed files
 - [ ] With nothing staged, Commit takes everything, new files included
+- [ ] With nothing changed, Commit makes an empty commit, to trigger CI for one
 - [ ] Discard in Changes goes back to the last commit
 - [ ] Discard in Staging goes back to what you staged
 - [ ] Discarding a new file deletes it

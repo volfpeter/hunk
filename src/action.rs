@@ -18,6 +18,8 @@ pub enum Action {
     Commit(String),
     /// Stages everything, then commits it.
     CommitAll(String),
+    /// Commits nothing.
+    CommitEmpty(String),
     /// Steps back from the commit, keeping its changes staged. `message` is what it said.
     UndoCommit { commit: String, message: String },
     Checkout(String),
@@ -92,7 +94,7 @@ impl Action {
             Action::StageAll => "Stage all",
             Action::UnstageAll => "Unstage all",
             Action::DiscardChanges(_) | Action::DiscardUnstaged(_) => "Discard",
-            Action::Commit(_) | Action::CommitAll(_) => "Commit",
+            Action::Commit(_) | Action::CommitAll(_) | Action::CommitEmpty(_) => "Commit",
             Action::UndoCommit { .. } => "Undo commit",
             Action::Checkout(_) | Action::Track { .. } => "Check out",
             Action::CreateBranch(_) => "New branch",
@@ -120,7 +122,7 @@ impl Action {
         let said = match self {
             Action::Stage(_) | Action::Unstage(_) | Action::StageAll | Action::UnstageAll => return None,
             Action::DiscardChanges(_) | Action::DiscardUnstaged(_) => "Discarded changes",
-            Action::Commit(_) | Action::CommitAll(_) => "Committed",
+            Action::Commit(_) | Action::CommitAll(_) | Action::CommitEmpty(_) => "Committed",
             Action::UndoCommit { .. } => "Undid the commit, its changes are staged",
             Action::Checkout(branch) | Action::Track { branch, .. } => return Some(format!("Switched to {branch}")),
             Action::CreateBranch(name) => return Some(format!("Created and switched to {name}")),
@@ -156,6 +158,7 @@ impl Action {
             Action::DiscardUnstaged(paths) => discard_unstaged(repo, paths),
             Action::Commit(message) => repo.run(&["commit", "-m", message]).map(drop),
             Action::CommitAll(message) => Action::StageAll.run(repo).and_then(|()| Action::Commit(message.clone()).run(repo)),
+            Action::CommitEmpty(message) => repo.run(&["commit", "--allow-empty", "-m", message]).map(drop),
             Action::UndoCommit { commit, .. } => undo_commit(repo, commit),
             Action::Checkout(branch) => repo.run(&["switch", branch]).map(drop),
             // The full ref, as a local branch may be called `<remote>/<branch>` too.
@@ -337,6 +340,14 @@ mod tests {
         Action::CommitAll("second".into()).run(&fixture.repo).unwrap();
         assert_eq!(status(&fixture), "");
         assert_eq!(fixture.git(&["show", "--format=", "--name-only", "HEAD"]), "a.txt\nnew.txt\n");
+    }
+
+    #[test]
+    fn commits_nothing() {
+        let fixture = Fixture::new();
+        fixture.commit("a.txt", "one\n", "first");
+        Action::CommitEmpty("again".into()).run(&fixture.repo).unwrap();
+        assert_eq!(fixture.git(&["log", "--format=%s"]), "again\nfirst\n");
     }
 
     #[test]

@@ -31,7 +31,7 @@ Check with a long string without spaces, in a narrow window.
 - A dialog opens focused on its close button, so Enter dismisses it. A focused button takes plain Enter only: Ctrl+Enter goes on to the window's `on_key`.
 - Short dialogs need `.fit()`, or they stay at the standard height.
 - A fitted dialog taller than the window runs off both ends, title and close button included. Keep it short, or scroll its body. A view doesn't know the window's height, so a list that can grow takes a fixed `max_h` and scrolls.
-- `Dialog` always centres its panel. To place it elsewhere, re-align the layer it pushes last, as the palette does.
+- `Dialog` always centres its panel. To place it elsewhere, re-align the layer it pushes last, as the palette does. That layer is a column, so its vertical axis is `justify_*`; `items_*` moves the panel sideways.
 - `Dialog` is either 368 points tall or as tall as its content. A panel filling the window is a layer of our own, with `El::modal` as `Dialog` uses.
 
 ## Scrolling

@@ -1093,10 +1093,10 @@ impl State {
         self.running.is_none() && self.overview.files.values().any(|status| status.staged.is_some())
     }
 
-    /// Whether there is anything to commit, and no merge or rebase to finish first. A conflict
-    /// left by applying a stash stops it too, as committing everything would stage it.
+    /// Whether there is no merge or rebase to finish first. A conflict left by applying a stash
+    /// stops it too, as committing everything would stage it.
     pub fn can_start_commit(&self) -> bool {
-        self.running.is_none() && !self.overview.files.is_empty() && self.overview.operation.is_none() && self.overview.conflicted().is_empty()
+        self.running.is_none() && self.overview.operation.is_none() && self.overview.conflicted().is_empty()
     }
 
     pub fn can_commit(&self) -> bool {
@@ -1114,13 +1114,20 @@ impl State {
         self.committing = false;
     }
 
-    /// Commits what is staged, or everything when nothing is. The message stays until that
-    /// worked.
+    /// Commits what is staged, everything when nothing is, and an empty commit when nothing
+    /// changed. The message stays until that worked.
     pub fn commit(&mut self) {
         if self.can_commit() {
             self.committing = false;
             let message = self.commit_text.text.trim().to_owned();
-            self.run(if self.overview.commit_plan().takes_all { Action::CommitAll(message) } else { Action::Commit(message) });
+            let action = if self.overview.files.is_empty() {
+                Action::CommitEmpty(message)
+            } else if self.overview.commit_plan().takes_all {
+                Action::CommitAll(message)
+            } else {
+                Action::Commit(message)
+            };
+            self.run(action);
         }
     }
 
@@ -1680,7 +1687,7 @@ impl State {
             Ok(()) => {
                 match action {
                     Action::Push if creating_pull_request => self.find_head_parent(),
-                    Action::Commit(_) | Action::CommitAll(_) => self.commit_text = TextEdit::default(),
+                    Action::Commit(_) | Action::CommitAll(_) | Action::CommitEmpty(_) => self.commit_text = TextEdit::default(),
                     // A message written since stays.
                     Action::UndoCommit { message, .. } if self.commit_text.text.trim().is_empty() => self.commit_text = TextEdit::new(message.clone()),
                     Action::Fetch => self.look_for_pull_requests(true),
@@ -2443,9 +2450,11 @@ mod tests {
         let (_fixture, mut state) = state();
         let ctrl = |key, shift| KeyEvent { key, mods: rune::Mods { ctrl: true, cmd: true, shift, ..rune::Mods::default() } };
 
+        state.overview.operation = Some(Operation::Merge { branch: "feature".into() });
         state.on_key(&ctrl(Key::Enter, false), &mut Tx::default());
-        assert!(!state.committing, "nothing to commit");
+        assert!(!state.committing, "a merge to finish");
 
+        state.overview.operation = None;
         state.overview.files.insert("a.txt".into(), status(false, true));
         state.open_remotes();
         state.on_key(&ctrl(Key::Enter, false), &mut Tx::default());
